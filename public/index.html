@@ -1,0 +1,1248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <meta
+        name="description"
+        content="Jarwis — your local AI assistant for chat, tools, memory, and work."
+    >
+
+    <title>Jarwis</title>
+    <meta name="theme-color" content="#14766d">
+    <meta name="color-scheme" content="light dark">
+    <link rel="icon" href="/jarwis-icon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="/jarwis-icon.svg">
+    <link rel="manifest" href="/manifest.webmanifest">
+
+    <link
+        rel="stylesheet"
+        href="style.css"
+    >
+</head>
+
+<body class="jarwis-boot">
+
+<div id="offlineBanner" class="offline-banner" hidden role="status">You are offline. Jarwis on this device still works for local models; cloud APIs need the internet.</div>
+
+<div id="landingPage" class="landing-page" hidden>
+    <header class="landing-nav">
+        <div class="landing-brand">
+            <img src="/jarwis-icon.svg" width="36" height="36" alt="">
+            <strong>Jarwis</strong>
+        </div>
+        <div class="landing-nav-actions">
+            <button type="button" class="landing-link" data-landing-action="signin">Sign in</button>
+            <button type="button" class="modal-button primary" data-landing-action="enter">Open Jarwis</button>
+        </div>
+    </header>
+    <main class="landing-hero">
+        <p class="landing-kicker">Local-first personal AI</p>
+        <h1>Your assistant. On your machine. Doing the work.</h1>
+        <p class="landing-lead">Jarwis chats, searches, writes files, remembers you, and picks a model automatically — Ollama when it fits, free cloud when you need speed, paid APIs only if you add a key.</p>
+        <div class="landing-cta">
+            <button type="button" class="modal-button primary" data-landing-action="enter">Start locally</button>
+            <button type="button" class="modal-button secondary" data-landing-action="setup">First-run setup</button>
+        </div>
+        <ul class="landing-points">
+            <li><strong>Automatic routing</strong> Hardware, internet, and quotas are checked for you. You see which model answered in small print.</li>
+            <li><strong>Agent tools</strong> Web search, code, files, images, and voice — toggle per conversation.</li>
+            <li><strong>One installable app</strong> Phone, tablet, and desktop from this same interface.</li>
+        </ul>
+    </main>
+</div>
+
+<div id="onboardingWizard" class="modal-overlay" aria-hidden="true">
+    <form class="control-center-modal onboarding-modal" id="onboardingForm">
+        <div class="rename-modal-header">
+            <div>
+                <div class="rename-modal-title" id="onboardingTitle">Welcome to Jarwis</div>
+                <div class="rename-modal-subtitle" id="onboardingSubtitle">Three short steps. You never have to pick a default model.</div>
+            </div>
+            <button type="button" class="modal-close-button" data-onboarding-action="skip" aria-label="Skip setup">×</button>
+        </div>
+        <div class="onboarding-progress" aria-hidden="true"><span id="onboardingProgress"></span></div>
+        <div class="control-center-body" id="onboardingBody"></div>
+        <div class="rename-modal-footer">
+            <button type="button" class="modal-button secondary" data-onboarding-action="back">Back</button>
+            <button type="button" class="modal-button primary" data-onboarding-action="next">Continue</button>
+        </div>
+    </form>
+</div>
+
+<div class="app" id="appShell">
+
+    <!-- =====================================================
+         SIDEBAR
+    ====================================================== -->
+
+    <aside class="sidebar" id="sidebar">
+
+        <div class="sidebar-top">
+
+            <!--
+            Collapse control. ChatGPT puts the sidebar toggle in
+            the header; this stays in the DOM (visually hidden)
+            so the existing script keeps its element and the
+            header button is the single visible control.
+            -->
+            <button
+                id="sidebarToggle"
+                class="sidebar-icon-button sidebar-toggle"
+                type="button"
+                title="Close sidebar"
+                aria-label="Close sidebar"
+                aria-expanded="true"
+                hidden
+            >
+                <span class="icon-glyph">☰</span>
+            </button>
+
+            <!--
+            New chat. A full-width labelled row, the way ChatGPT
+            presents it, rather than a bare icon: it is the primary
+            action in the sidebar and must read as one.
+            -->
+            <button
+                id="newChatButton"
+                class="new-chat-button"
+                type="button"
+                title="New chat"
+                aria-label="New chat"
+            >
+                <span class="new-chat-icon" aria-hidden="true">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                        <path d="M11.5 2.5l2 2L5 13H3v-2l8.5-8.5z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+                    </svg>
+                </span>
+                <span>New chat</span>
+            </button>
+
+        </div>
+
+        <div class="search-container" id="searchContainer">
+
+            <div class="search-box">
+
+                <span class="search-icon">⌕</span>
+
+                <input
+                    id="searchInput"
+                    type="text"
+                    placeholder="Search chats..."
+                    autocomplete="off"
+                >
+
+            </div>
+
+        </div>
+
+        <nav class="sidebar-navigation" aria-label="Jarwis sections">
+            <button class="sidebar-nav-item" data-view="projects" type="button">
+                <span class="sidebar-nav-icon" aria-hidden="true">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                        <rect x="2" y="2.5" width="12" height="11" rx="2" stroke="currentColor" stroke-width="1.3"/>
+                        <path d="M2 6.5h12" stroke="currentColor" stroke-width="1.3"/>
+                    </svg>
+                </span>
+                <span>Projects</span>
+            </button>
+            <button class="sidebar-nav-item" data-view="images" type="button">
+                <span class="sidebar-nav-icon" aria-hidden="true">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                        <path d="M8 2l1.6 4.4L14 8l-4.4 1.6L8 14l-1.6-4.4L2 8l4.4-1.6L8 2z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+                    </svg>
+                </span>
+                <span>Images</span>
+            </button>
+        </nav>
+
+        <!--
+        Projects. ChatGPT lists projects in the sidebar above
+        chats, each one clickable. The list is filled by the script
+        from GET /api/projects.
+        -->
+        <div class="conversation-section projects-section">
+
+            <div class="conversation-section-title">
+                <span>Projects</span>
+                <button
+                    id="sidebarNewProject"
+                    class="section-title-action"
+                    type="button"
+                    title="New project"
+                    aria-label="New project"
+                >+</button>
+            </div>
+
+            <div
+                id="sidebarProjectList"
+                class="conversation-list"
+            ></div>
+
+        </div>
+
+        <div class="conversation-section">
+
+            <div class="conversation-section-title">
+                <span>Chats</span>
+            </div>
+
+            <div
+                id="conversationList"
+                class="conversation-list"
+            ></div>
+
+        </div>
+
+        <div class="sidebar-footer">
+
+            <button
+                id="installAppButton"
+                class="pwa-install-button"
+                type="button"
+                hidden
+            >
+                <span aria-hidden="true">↓</span>
+                <span>Install Jarwis</span>
+            </button>
+
+            <div class="account-menu-container">
+                <button
+                    id="accountSettingsButton"
+                    class="sidebar-footer-item"
+                    type="button"
+                    title="Account menu"
+                    aria-haspopup="menu"
+                    aria-expanded="false"
+                    aria-controls="accountMenu"
+                >
+
+                <div class="footer-avatar">
+                    <svg viewBox="0 0 40 40" aria-hidden="true" focusable="false">
+                        <path d="M11 29V11l18 18V11" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+                        <circle cx="11" cy="11" r="2.5" fill="currentColor"/>
+                        <circle cx="29" cy="29" r="2.5" fill="currentColor"/>
+                    </svg>
+                </div>
+
+                <div class="footer-info">
+
+                    <div class="footer-name">
+                        Jarwis
+                    </div>
+
+                    <div class="footer-status">
+                        Local Assistant
+                    </div>
+
+                </div>
+
+                <span class="footer-chevron">⌃</span>
+
+                </button>
+                <div id="accountMenu" class="account-menu" role="menu" aria-label="Account">
+                    <div class="account-menu-heading">
+                        <strong>Jarwis</strong>
+                        <small id="accountMenuStatus">Local assistant</small>
+                    </div>
+                    <button type="button" role="menuitem" data-account-action="settings">Settings</button>
+                    <button type="button" role="menuitem" data-account-action="profile">Profile</button>
+                    <div class="account-menu-divider"></div>
+                    <button type="button" role="menuitem" class="account-menu-signout" data-account-action="signout">Sign out</button>
+                </div>
+            </div>
+
+        </div>
+
+    </aside>
+
+
+    <!-- =====================================================
+         MAIN
+    ====================================================== -->
+
+    <main class="main-content">
+
+        <header class="chat-header">
+
+            <div class="chat-header-left">
+
+                <!--
+                Sidebar toggle. ChatGPT keeps this visible on the
+                left at all times (it collapses and expands the
+                rail), so it is not hidden when the sidebar is open.
+                -->
+                <button
+                    id="sidebarOpen"
+                    class="header-icon-button sidebar-open"
+                    type="button"
+                    title="Toggle sidebar"
+                    aria-label="Toggle sidebar"
+                >
+                    <span class="icon-glyph" aria-hidden="true">
+                        <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                            <path d="M2.5 4.5h13M2.5 9h13M2.5 13.5h13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                        </svg>
+                    </span>
+                </button>
+
+                <!--
+                The current chat title, shown in the header like
+                ChatGPT's conversation name. The script updates it
+                whenever the active conversation changes.
+                -->
+                <span
+                    id="chatTitle"
+                    class="chat-title-label"
+                >Jarwis</span>
+
+            </div>
+
+            <div class="chat-header-center">
+
+                <button
+                    id="modelMenuButton"
+                    class="model-menu-button"
+                    type="button"
+                    aria-haspopup="menu"
+                    aria-expanded="false"
+                >
+                    <span id="modelMenuLabel" class="model-menu-label">Jarwis</span>
+                    <span class="model-menu-caret" aria-hidden="true">
+                        <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                            <path d="M2 4l3 3 3-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                    </span>
+                </button>
+
+                <div
+                    id="modelMenu"
+                    class="model-menu"
+                    role="menu"
+                    hidden
+                >
+                    <div class="model-menu-section-title">Intelligence</div>
+                    <div class="model-menu-options" id="intelligenceMenuOptions"></div>
+                    <div class="model-menu-divider"></div>
+                    <div class="model-menu-section-title">Model</div>
+                    <div class="model-menu-options" id="modelMenuOptions"></div>
+                    <div class="model-menu-divider"></div>
+                    <div class="model-menu-section-title">Agent</div>
+                    <div class="model-menu-options" id="agentMenuOptions"></div>
+                </div>
+
+                <!-- Native selects kept in the DOM: existing script drives them -->
+                <label class="sr-only" for="modelSelector">Model</label>
+                <select
+                    id="modelSelector"
+                    class="composer-select hidden-native-select"
+                    aria-label="Select model role"
+                >
+                    <option value="chat">Chat</option>
+                </select>
+
+                <label class="sr-only" for="intelligenceSelector">Intelligence</label>
+                <select
+                    id="intelligenceSelector"
+                    class="composer-select hidden-native-select"
+                    aria-label="Select intelligence level"
+                >
+                    <option value="auto">Auto</option>
+                    <option value="fast">Fast</option>
+                    <option value="balanced" selected>Balanced</option>
+                    <option value="high">High</option>
+                    <option value="very-high">Very High</option>
+                    <option value="maximum">Maximum</option>
+                    <option value="expert">Expert</option>
+                </select>
+
+            </div>
+
+            <div class="chat-header-right">
+
+                <button
+                    id="controlCenterButton"
+                    class="header-icon-button"
+                    type="button"
+                    title="Settings"
+                    aria-label="Settings"
+                >
+                    <span class="icon-glyph" aria-hidden="true">
+                        <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                            <circle cx="9" cy="9" r="2.4" stroke="currentColor" stroke-width="1.5"/>
+                            <path d="M9 1.8v2.1M9 14.1v2.1M3.9 3.9l1.5 1.5M12.6 12.6l1.5 1.5M1.8 9h2.1M14.1 9h2.1M3.9 14.1l1.5-1.5M12.6 5.4l1.5-1.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                        </svg>
+                    </span>
+                </button>
+
+            </div>
+
+        </header>
+
+
+        <div class="workspace-layout">
+
+            <!-- =================================================
+                 CHAT
+            ================================================== -->
+
+            <section class="chat-panel">
+
+                <section
+                    id="messages"
+                    class="messages"
+                ></section>
+
+                <section id="workspacePage" class="workspace-page" hidden>
+                    <div class="product-view-header">
+                        <div>
+                            <h1>Artifacts &amp; workspace</h1>
+                            <p>Browse project files, agent activity, verification results, and live previews.</p>
+                        </div>
+                    </div>
+                </section>
+
+
+                <div class="input-area">
+
+                    <div class="input-wrapper">
+
+                        <textarea
+                            id="messageInput"
+                            rows="1"
+                            placeholder="Ask anything"
+                            autocomplete="off"
+                            spellcheck="true"
+                        ></textarea>
+
+                        <div class="composer-toolbar">
+                            <!--
+                            ChatGPT's composer: a small icon row on
+                            the left (attach, tools, reasoning, web,
+                            image) and voice + send on the right.
+                            Icon-first, with meaning carried by the
+                            tooltip and aria-label.
+                            -->
+                            <div class="composer-tools">
+                                <button
+                                    id="attachmentButton"
+                                    class="composer-icon-button"
+                                    type="button"
+                                    title="Add photos and files"
+                                    aria-label="Add photos and files"
+                                >
+                                    <span class="icon-glyph" aria-hidden="true">
+                                        <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                                            <path d="M9 3.5v11M3.5 9h11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                                        </svg>
+                                    </span>
+                                </button>
+                                <input
+                                    id="attachmentInput"
+                                    type="file"
+                                    hidden
+                                    multiple
+                                >
+                                <button
+                                    id="toolsButton"
+                                    class="composer-icon-button"
+                                    type="button"
+                                    title="Tools"
+                                    aria-label="Tools"
+                                    aria-expanded="false"
+                                >
+                                    <span class="icon-glyph" aria-hidden="true">
+                                        <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                                            <circle cx="9" cy="9" r="2.2" stroke="currentColor" stroke-width="1.5"/>
+                                            <path d="M9 2.6v1.8M9 13.6v1.8M4.5 4.5l1.3 1.3M12.2 12.2l1.3 1.3M2.6 9h1.8M13.6 9h1.8M4.5 13.5l1.3-1.3M12.2 5.8l1.3-1.3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                                        </svg>
+                                    </span>
+                                </button>
+                                <button
+                                    id="thinkButton"
+                                    class="composer-icon-button"
+                                    type="button"
+                                    title="Think longer"
+                                    aria-label="Think longer"
+                                    aria-pressed="false"
+                                >
+                                    <span class="icon-glyph" aria-hidden="true">
+                                        <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                                            <path d="M9 2.5l1.7 4.3 4.3 1.7-4.3 1.7L9 14.5l-1.7-4.3L3 8.5l4.3-1.7L9 2.5z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+                                        </svg>
+                                    </span>
+                                </button>
+                                <button
+                                    id="webSearchButton"
+                                    class="composer-icon-button"
+                                    type="button"
+                                    title="Search the web"
+                                    aria-label="Search the web"
+                                    aria-pressed="false"
+                                >
+                                    <span class="icon-glyph" aria-hidden="true">
+                                        <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                                            <circle cx="8" cy="8" r="4.8" stroke="currentColor" stroke-width="1.5"/>
+                                            <path d="M11.6 11.6l3.4 3.4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                                        </svg>
+                                    </span>
+                                </button>
+                                <button
+                                    id="imageButton"
+                                    class="composer-icon-button"
+                                    type="button"
+                                    title="Create an image"
+                                    aria-label="Create an image"
+                                >
+                                    <span class="icon-glyph" aria-hidden="true">
+                                        <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                                            <rect x="2.5" y="3.5" width="13" height="11" rx="2" stroke="currentColor" stroke-width="1.5"/>
+                                            <circle cx="6.6" cy="7.2" r="1.1" stroke="currentColor" stroke-width="1.3"/>
+                                            <path d="M3 12.6l3.6-3.2 2.6 2.3 2.2-1.9 3.6 3.1" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+                                        </svg>
+                                    </span>
+                                </button>
+                            </div>
+                            <div class="composer-controls">
+                                <button
+                                    id="voiceButton"
+                                    class="composer-icon-button voice-button"
+                                    type="button"
+                                    title="Start voice chat"
+                                    aria-label="Start voice chat"
+                                >
+                                    <span class="icon-glyph" aria-hidden="true">
+                                        <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                                            <rect x="6.6" y="2.2" width="4.8" height="8" rx="2.4" stroke="currentColor" stroke-width="1.5"/>
+                                            <path d="M4.2 8.6a4.8 4.8 0 0 0 9.6 0M9 13.4v2.4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                                        </svg>
+                                    </span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <button
+                            id="sendButton"
+                            class="send-button"
+                            type="button"
+                            title="Send message"
+                            aria-label="Send message"
+                        >
+
+                            <span class="icon-glyph" aria-hidden="true">
+                                <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                                    <path d="M9 15V3M3.8 8.2 9 3l5.2 5.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                                </svg>
+                            </span>
+
+                        </button>
+
+                    </div>
+
+                </div>
+
+            </section>
+
+
+            <!-- =================================================
+                 WORKSPACE
+            ================================================== -->
+
+            <aside
+                id="workspacePanel"
+                class="workspace-panel"
+                hidden
+            >
+
+                <nav class="workspace-tabs" aria-label="Workspace sections">
+                    <button
+                        type="button"
+                        class="workspace-tab active"
+                        data-workspace-section="activity"
+                    >Activity</button>
+                    <button
+                        type="button"
+                        class="workspace-tab"
+                        data-workspace-section="files"
+                    >Files</button>
+                    <button
+                        type="button"
+                        class="workspace-tab"
+                        data-workspace-section="preview"
+                    >Preview</button>
+                    <button
+                        type="button"
+                        class="workspace-tab"
+                        data-workspace-section="workspaceProjectSection"
+                    >Project</button>
+                    <button
+                        type="button"
+                        class="workspace-tab"
+                        data-workspace-section="workspaceVerificationSection"
+                    >Verification</button>
+                </nav>
+
+
+                <section
+                    id="workspaceActivitySection"
+                    class="workspace-section"
+                >
+
+                    <div class="workspace-section-header">
+
+                        <span>
+                            Agent Activity
+                        </span>
+
+                        <span
+                            id="activityState"
+                            class="activity-state"
+                        >
+                            Ready
+                        </span>
+
+                    </div>
+
+
+                    <div
+                        id="agentActivity"
+                        class="agent-activity"
+                    >
+
+                        <div class="activity-empty">
+                            Jarwis activity will appear here when it works on your project.
+                        </div>
+
+                    </div>
+
+                </section>
+
+
+                <section id="workspaceProjectSection" class="workspace-section">
+
+                    <div class="workspace-section-header">
+
+                        <span>
+                            Project
+                        </span>
+
+                        <button
+                            id="refreshWorkspace"
+                            class="small-action-button"
+                            type="button"
+                            title="Refresh workspace"
+                        >
+                            ↻
+                        </button>
+
+                    </div>
+
+
+                    <div
+                        id="projectInfo"
+                        class="project-info"
+                    >
+
+                        <div class="project-empty">
+                            No project detected yet.
+                        </div>
+
+                    </div>
+
+                </section>
+
+
+                <section
+                    id="workspaceFilesSection"
+                    class="workspace-section workspace-files-section"
+                >
+
+                    <div class="workspace-section-header">
+
+                        <span>
+                            Files
+                        </span>
+
+                        <span
+                            id="fileCount"
+                            class="file-count"
+                        >
+                            0
+                        </span>
+
+                    </div>
+
+
+                    <div
+                        id="workspaceTree"
+                        class="workspace-tree"
+                    >
+
+                        <div class="tree-empty">
+                            Workspace is empty.
+                        </div>
+
+                    </div>
+
+                </section>
+
+
+                <section
+                    id="fileEditorSection"
+                    class="workspace-section file-editor-section hidden"
+                >
+
+                    <div class="workspace-section-header">
+
+                        <span
+                            id="selectedFileName"
+                        >
+                            File
+                        </span>
+
+                        <div class="editor-actions">
+
+                            <button
+                                id="saveFileButton"
+                                class="small-action-button"
+                                type="button"
+                            >
+                                Save
+                            </button>
+
+                            <button
+                                id="closeFileButton"
+                                class="small-action-button"
+                                type="button"
+                            >
+                                ×
+                            </button>
+
+                        </div>
+
+                    </div>
+
+
+                    <textarea
+                        id="fileEditor"
+                        class="file-editor"
+                        spellcheck="false"
+                    ></textarea>
+
+                </section>
+
+
+                <section
+                    id="workspacePreviewSection"
+                    class="workspace-section preview-section"
+                >
+
+                    <div class="workspace-section-header">
+
+                        <span>
+                            Live Preview
+                        </span>
+
+                        <div class="preview-actions">
+
+                            <button
+                                id="openPreviewButton"
+                                class="small-action-button"
+                                type="button"
+                            >
+                                Open
+                            </button>
+
+                            <button
+                                id="refreshPreviewButton"
+                                class="small-action-button"
+                                type="button"
+                            >
+                                ↻
+                            </button>
+
+                        </div>
+
+                    </div>
+
+
+                    <div
+                        id="previewContainer"
+                        class="preview-container"
+                    >
+
+                        <div class="preview-placeholder">
+
+                            <div class="preview-icon">
+                                ◇
+                            </div>
+
+                            <div class="preview-title">
+                                No preview yet
+                            </div>
+
+                            <div class="preview-description">
+                                Create a website project and Jarwis will make it available here.
+                            </div>
+
+                        </div>
+
+                    </div>
+
+                </section>
+
+
+                <section id="workspaceVerificationSection" class="workspace-section">
+
+                    <div class="workspace-section-header">
+                        <span>
+                            Verification
+                        </span>
+                    </div>
+
+
+                    <div
+                        id="verificationPanel"
+                        class="verification-panel"
+                    >
+
+                        <div class="verification-empty">
+                            Nothing verified yet.
+                        </div>
+
+                    </div>
+
+                </section>
+
+            </aside>
+
+        </div>
+
+    </main>
+
+</div>
+
+<!-- Accessibility / legacy anchors referenced by the existing script -->
+<span id="agentStatus" class="sr-only" aria-live="polite">Ready</span>
+<div id="thinkingMessage" class="sr-only" aria-hidden="true"></div>
+
+
+<!-- =========================================================
+     CONTROL CENTER
+========================================================= -->
+
+<div
+    id="controlCenterModal"
+    class="modal-overlay"
+    aria-hidden="true"
+>
+    <div
+        class="control-center-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="controlCenterTitle"
+    >
+
+        <div class="rename-modal-header">
+
+            <div>
+                <div
+                    id="controlCenterTitle"
+                    class="rename-modal-title"
+                >
+                    Settings
+                </div>
+
+                <div class="rename-modal-subtitle">
+                    Account, appearance, models, integrations, permissions, and runtime health.
+                </div>
+            </div>
+
+            <button
+                type="button"
+                class="modal-close-button"
+                data-action="close-control-center"
+                aria-label="Close"
+            >
+                ×
+            </button>
+
+        </div>
+
+        <div
+            id="controlCenterBody"
+            class="control-center-body"
+        >
+            <div class="capability-loading">Loading capabilities...</div>
+        </div>
+
+        <div class="rename-modal-footer">
+            <button
+                type="button"
+                class="modal-button secondary"
+                data-action="close-control-center"
+            >
+                Close
+            </button>
+        </div>
+
+    </div>
+</div>
+
+
+<!-- =========================================================
+     PRODUCT VIEW (projects / scheduled / plugins / library / ...)
+========================================================= -->
+
+<div
+    id="productView"
+    class="modal-overlay"
+    aria-hidden="true"
+>
+    <div
+        class="control-center-modal"
+        role="dialog"
+        aria-modal="true"
+    >
+        <div class="rename-modal-header">
+            <div>
+                <div
+                    id="productViewTitle"
+                    class="rename-modal-title"
+                >
+                    Nexus
+                </div>
+                <div class="rename-modal-subtitle" id="productViewSubtitle">
+                    Browse this section of Jarwis.
+                </div>
+            </div>
+            <button
+                type="button"
+                class="modal-close-button"
+                data-action="close-product-view"
+                aria-label="Close"
+            >
+                ×
+            </button>
+        </div>
+        <div id="productViewBody" class="control-center-body"></div>
+        <div class="rename-modal-footer">
+            <button
+                type="button"
+                class="modal-button secondary"
+                data-action="close-product-view"
+            >
+                Close
+            </button>
+        </div>
+    </div>
+</div>
+
+<div id="projectCreateModal" class="modal-overlay project-create-overlay" aria-hidden="true">
+    <section class="rename-modal project-create-modal" role="dialog" aria-modal="true" aria-labelledby="projectCreateTitle">
+        <header class="rename-modal-header">
+            <div>
+                <div id="projectCreateTitle" class="rename-modal-title">Create a project</div>
+                <div class="rename-modal-subtitle">Give Jarwis a goal and a dedicated space for its chats and files.</div>
+            </div>
+            <button type="button" class="modal-close-button" data-action="close-project-create" aria-label="Close">×</button>
+        </header>
+        <div class="rename-modal-body project-create-body">
+            <div class="project-create-intro">
+                <span class="project-create-mark" aria-hidden="true">✳</span>
+                <span><strong>A focused workspace for bigger work</strong><small>Jarwis keeps project context together so you can pick up where you left off.</small></span>
+            </div>
+            <label for="projectNameInput" class="rename-input-label">Project name</label>
+            <input id="projectNameInput" type="text" maxlength="100" placeholder="e.g. Personal website" autocomplete="off">
+            <label for="projectGoalInput" class="rename-input-label project-goal-label">What are you working on? <span>Optional</span></label>
+            <textarea id="projectGoalInput" rows="3" maxlength="2000" placeholder="Describe the outcome you want, useful context, or how Jarwis should help."></textarea>
+            <p id="projectCreateError" class="project-create-error" role="alert" hidden></p>
+        </div>
+        <footer class="rename-modal-footer">
+            <button type="button" class="modal-button secondary" data-action="close-project-create">Cancel</button>
+            <button type="button" class="modal-button primary" data-product-action="new-project">Create project</button>
+        </footer>
+    </section>
+</div>
+
+<div id="chatProjectModal" class="modal-overlay" aria-hidden="true">
+    <section class="rename-modal chat-action-modal" role="dialog" aria-modal="true" aria-labelledby="chatProjectTitle">
+        <header class="rename-modal-header">
+            <div>
+                <div id="chatProjectTitle" class="rename-modal-title">Add chat to a project</div>
+                <div class="rename-modal-subtitle">Keep related conversations together in your local workspace.</div>
+            </div>
+            <button type="button" class="modal-close-button" data-action="close-chat-project" aria-label="Close">×</button>
+        </header>
+        <div class="rename-modal-body">
+            <label for="chatProjectSelect" class="rename-input-label">Choose a project</label>
+            <select id="chatProjectSelect" class="chat-project-select"></select>
+            <p id="chatProjectError" class="project-create-error" role="alert" hidden></p>
+        </div>
+        <footer class="rename-modal-footer">
+            <button type="button" class="modal-button secondary" data-action="close-chat-project">Cancel</button>
+            <button type="button" class="modal-button primary" data-product-action="save-chat-project">Add to project</button>
+        </footer>
+    </section>
+</div>
+
+<div id="chatShareModal" class="modal-overlay" aria-hidden="true">
+    <section class="rename-modal chat-action-modal" role="dialog" aria-modal="true" aria-labelledby="chatShareTitle">
+        <header class="rename-modal-header">
+            <div>
+                <div id="chatShareTitle" class="rename-modal-title">Share this chat</div>
+                <div class="rename-modal-subtitle">Your conversations stay on this computer.</div>
+            </div>
+            <button type="button" class="modal-close-button" data-action="close-chat-share" aria-label="Close">×</button>
+        </header>
+        <div class="rename-modal-body chat-share-body">
+            <div class="chat-share-icon" aria-hidden="true">↗</div>
+            <strong>Copy a readable transcript</strong>
+            <p>Jarwis runs locally, so public share links and invited collaborators are not enabled. Copy the chat text and share it using an app you trust.</p>
+            <p id="chatShareError" class="project-create-error" role="alert" hidden></p>
+        </div>
+        <footer class="rename-modal-footer">
+            <button type="button" class="modal-button secondary" data-action="close-chat-share">Close</button>
+            <button type="button" class="modal-button primary" data-product-action="copy-chat-transcript">Copy transcript</button>
+        </footer>
+    </section>
+</div>
+
+<div id="projectDetailModal" class="modal-overlay" aria-hidden="true">
+    <section class="rename-modal project-detail-modal" role="dialog" aria-modal="true" aria-labelledby="projectDetailTitle">
+        <header class="rename-modal-header">
+            <div>
+                <div id="projectDetailTitle" class="rename-modal-title">Project details</div>
+                <div class="rename-modal-subtitle">Edit the project goal and find its conversations.</div>
+            </div>
+            <button type="button" class="modal-close-button" data-action="close-project-detail" aria-label="Close">×</button>
+        </header>
+        <div class="rename-modal-body" id="projectDetailBody"></div>
+        <footer class="rename-modal-footer">
+            <button type="button" class="modal-button secondary" data-action="close-project-detail">Close</button>
+            <button type="button" class="modal-button primary" data-product-action="save-project-details">Save changes</button>
+        </footer>
+    </section>
+</div>
+
+<div
+    id="voiceModeModal"
+    class="modal-overlay voice-mode-overlay"
+    aria-hidden="true"
+>
+    <section
+        class="voice-mode-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="voiceModeTitle"
+    >
+        <header class="voice-mode-header">
+            <div>
+                <h1 id="voiceModeTitle">Voice conversation</h1>
+                <p id="voiceModeStatus" role="status" aria-live="polite">Ready to listen</p>
+            </div>
+            <button id="voiceEndButton" class="modal-close-button" type="button" aria-label="End voice conversation">×</button>
+        </header>
+        <div class="voice-mode-stage">
+            <div class="voice-orb" aria-hidden="true"><span></span></div>
+            <p id="voiceModeTranscript" class="voice-mode-transcript">Start speaking when the microphone is listening.</p>
+            <p class="voice-mode-privacy">Speech recognition is provided by your browser and may use an online service. Jarwis sends recognized text to the automatically selected chat model.</p>
+        </div>
+        <footer class="voice-mode-controls">
+            <button id="voiceMicToggleButton" class="modal-button secondary" type="button">Pause microphone</button>
+            <button id="voiceEndSessionButton" class="modal-button primary" type="button">End conversation</button>
+        </footer>
+    </section>
+</div>
+
+
+<!-- =========================================================
+     RENAME MODAL
+========================================================= -->
+
+<div
+    id="renameModal"
+    class="modal-overlay"
+    aria-hidden="true"
+>
+    <div
+        class="rename-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="renameModalTitle"
+    >
+
+        <div class="rename-modal-header">
+
+            <div>
+
+                <div
+                    id="renameModalTitle"
+                    class="rename-modal-title"
+                >
+                    Rename Chat
+                </div>
+
+                <div class="rename-modal-subtitle">
+                    Enter a new name for this conversation.
+                </div>
+
+            </div>
+
+            <button
+                type="button"
+                class="modal-close-button"
+                data-action="cancel-rename"
+                aria-label="Close"
+            >
+                ×
+            </button>
+
+        </div>
+
+
+        <div class="rename-modal-body">
+
+            <label
+                for="renameChatInput"
+                class="rename-input-label"
+            >
+                Chat name
+            </label>
+
+            <input
+                id="renameChatInput"
+                type="text"
+                maxlength="100"
+                placeholder="Enter chat name"
+                autocomplete="off"
+            >
+
+        </div>
+
+
+        <div class="rename-modal-footer">
+
+            <button
+                type="button"
+                class="modal-button secondary"
+                data-action="cancel-rename"
+            >
+                Cancel
+            </button>
+
+            <button
+                type="button"
+                class="modal-button primary"
+                data-action="save-rename"
+            >
+                Save
+            </button>
+
+        </div>
+
+    </div>
+</div>
+
+<div
+    id="authLoginModal"
+    class="modal-overlay auth-login-overlay"
+    aria-hidden="true"
+>
+    <form
+        id="authLoginForm"
+        class="control-center-modal auth-login-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="authLoginTitle"
+    >
+        <div class="auth-brand">
+            <div class="auth-brand-mark" aria-hidden="true">
+                <svg viewBox="0 0 40 40" focusable="false">
+                    <path d="M11 29V11l18 18V11" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+                    <circle cx="11" cy="11" r="2.5" fill="currentColor"/>
+                    <circle cx="29" cy="29" r="2.5" fill="currentColor"/>
+                </svg>
+            </div>
+            <div>
+                <div class="auth-brand-name">Jarwis</div>
+                <div class="auth-brand-caption">Your local assistant for thinking and doing</div>
+            </div>
+        </div>
+        <div class="auth-form-heading">
+            <div>
+                <h1 id="authLoginTitle">Sign in</h1>
+                <p id="authLoginSubtitle">Continue to your Jarwis workspace.</p>
+            </div>
+        </div>
+        <div class="auth-login-body">
+            <label id="authLoginUsernameLabel" for="authLoginUsername">Email or username</label>
+            <input id="authLoginUsername" name="username" type="text" autocomplete="username" placeholder="you@example.com" required>
+            <label id="authLoginPasswordLabel" for="authLoginPassword">Password</label>
+            <input id="authLoginPassword" name="password" type="password" autocomplete="current-password" placeholder="Enter your password" required>
+            <div class="auth-password-help">Your password is stored securely and is never shown to the assistant.</div>
+            <button id="authForgotPasswordButton" class="auth-switch-button auth-forgot-button" type="button" hidden>Forgot password?</button>
+            <input id="authResetToken" type="hidden" autocomplete="off">
+            <label id="authSignupConfirmLabel" for="authSignupConfirm" hidden>Confirm password</label>
+            <input id="authSignupConfirm" type="password" autocomplete="new-password" placeholder="Enter your password again" hidden>
+            <label id="authSignupInviteLabel" for="authSignupInvite" hidden>Invitation code (optional)</label>
+            <input id="authSignupInvite" type="password" autocomplete="off" placeholder="Only if you were given one" hidden>
+            <p id="authLoginError" class="auth-login-error" role="alert"></p>
+            <a id="googleSignInButton" class="google-sign-in-button" href="/api/auth/google" hidden>
+                <svg aria-hidden="true" viewBox="0 0 18 18" width="18" height="18">
+                    <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.27h2.91c1.7-1.57 2.69-3.89 2.69-6.63Z"/>
+                    <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.17l-2.91-2.27c-.8.54-1.83.87-3.05.87-2.35 0-4.34-1.59-5.05-3.73H.94v2.34A9 9 0 0 0 9 18Z"/>
+                    <path fill="#FBBC05" d="M3.95 10.7a5.4 5.4 0 0 1 0-3.4V4.96H.94a9 9 0 0 0 0 8.08l3.01-2.34Z"/>
+                    <path fill="#EA4335" d="M9 3.57c1.32 0 2.5.45 3.43 1.34l2.58-2.58A8.63 8.63 0 0 0 9 0 9 9 0 0 0 .94 4.96l3.01 2.34C4.66 5.16 6.65 3.57 9 3.57Z"/>
+                </svg>
+                Continue with Google
+            </a>
+            <div id="authSignInDivider" class="auth-divider" hidden><span>or continue with email</span></div>
+            <button id="authSignupToggle" class="auth-switch-button" type="button" hidden>Create an account</button>
+            <button id="authLoginToggle" class="auth-switch-button" type="button" hidden>Back to sign in</button>
+            <p id="authTerms" class="auth-terms">By continuing, you agree to use Jarwis responsibly. Chats stay on this machine unless you connect a cloud provider.</p>
+        </div>
+        <div class="rename-modal-footer">
+            <button class="modal-button primary auth-submit" id="authLoginSubmit" type="submit">Sign in</button>
+        </div>
+        <aside class="auth-visual-panel" aria-label="What Jarwis can help with">
+            <div class="auth-visual-glow" aria-hidden="true"></div>
+            <div class="auth-visual-copy">
+                <span class="auth-visual-eyebrow">A capable assistant, close to home</span>
+                <h2>Think it through.<br>Then get it done.</h2>
+                <p>Ask a question, shape an idea, or hand Jarwis a multi-step task. It can plan, use tools, and show you what it did.</p>
+            </div>
+            <div class="auth-visual-workflow" aria-hidden="true">
+                <div class="auth-workflow-line"></div>
+                <div class="auth-workflow-card">
+                    <span class="auth-workflow-icon">01</span>
+                    <span><strong>Understand</strong><small>Break down your goal</small></span>
+                    <span class="auth-workflow-check">✓</span>
+                </div>
+                <div class="auth-workflow-card">
+                    <span class="auth-workflow-icon">02</span>
+                    <span><strong>Choose a model</strong><small>Local first, cloud when connected</small></span>
+                    <span class="auth-workflow-check">✓</span>
+                </div>
+                <div class="auth-workflow-card">
+                    <span class="auth-workflow-icon">03</span>
+                    <span><strong>Make progress</strong><small>Use agents and approved tools</small></span>
+                    <span class="auth-workflow-check">↗</span>
+                </div>
+            </div>
+            <div class="auth-visual-footnote"><span aria-hidden="true"></span> Your machine stays in control. Cloud providers are optional.</div>
+        </aside>
+    </form>
+</div>
+
+
+<script src="script.js"></script>
+
+</body>
+</html>

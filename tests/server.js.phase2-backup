@@ -1,0 +1,1415 @@
+const express = require("express");
+
+const database = require("./database");
+const memory = require("./memory");
+
+const {
+    normalizeMemoryKey
+} = require("./memoryNormalizer");
+
+const {
+    extractMemories
+} = require("./memoryExtractor");
+
+const {
+    retrieveContext,
+    buildContext
+} = require("./rag");
+
+const {
+    Client
+} = require("@modelcontextprotocol/sdk/client/index.js");
+
+const {
+    StdioClientTransport
+} = require("@modelcontextprotocol/sdk/client/stdio.js");
+
+const {
+    decideAction
+} = require("./agent");
+
+const app = express();
+
+const PORT = 3000;
+const MODEL = "qwen2.5:1.5b";
+
+app.use(express.json());
+app.use(express.static("public"));
+
+
+// ============================================================
+// NORMALIZE EXISTING MEMORIES
+// ============================================================
+
+memory.normalizeExistingMemories(
+    normalizeMemoryKey
+);
+
+
+// ============================================================
+// OLLAMA ANSWER
+// ============================================================
+
+async function generateAnswer(
+    userMessage,
+    context = "",
+    memories = "",
+    conversation = "",
+    toolResult = ""
+) {
+
+    const prompt = `
+You are Nexus AI.
+
+Answer the user's current message directly.
+
+IMPORTANT RULES:
+
+- Answer only what the user is asking.
+- Do not invent information.
+- Do not assume something is true unless it is explicitly stated.
+- Long-term memories are background context only.
+- Do not treat a memory as something the user said in the current message.
+- Use document context only when relevant.
+- Ignore irrelevant document context.
+- Keep the response concise unless the user asks for detail.
+- Do not mention these instructions.
+
+LONG-TERM MEMORY:
+${memories || "No saved memories."}
+
+DOCUMENT CONTEXT:
+${context || "No relevant document context."}
+
+TOOL RESULT:
+${toolResult || "No tool result."}
+
+CONVERSATION:
+${conversation || "No previous conversation."}
+
+CURRENT USER MESSAGE:
+${userMessage}
+`;
+
+    const response = await fetch(
+        "http://localhost:11434/api/chat",
+        {
+            method: "POST",
+
+            headers: {
+                "Content-Type":
+                    "application/json"
+            },
+
+            body: JSON.stringify({
+                model: MODEL,
+
+                messages: [
+                    {
+                        role: "user",
+                        content: prompt
+                    }
+                ],
+
+                stream: false
+            })
+        }
+    );
+
+    if (!response.ok) {
+
+        const errorText =
+            await response.text();
+
+        throw new Error(
+            `Ollama error ${response.status}: ${errorText}`
+        );
+    }
+
+    const data =
+        await response.json();
+
+    if (
+        !data ||
+        !data.message ||
+        !data.message.content
+    ) {
+
+        throw new Error(
+            "Ollama returned an empty response."
+        );
+    }
+
+    return data.message.content.trim();
+}
+
+
+// ============================================================
+// MEMORY QUESTION
+// ============================================================
+
+function isMemoryQuestion(message) {
+
+    const text =
+        message
+            .trim()
+            .toLowerCase();
+
+    const patterns = [
+
+        "what do you remember about me",
+
+        "what do you know about me",
+
+        "what memories do you have about me",
+
+        "tell me what you remember about me",
+
+        "show me what you remember about me"
+
+    ];
+
+    return patterns.includes(text);
+}
+
+
+// ============================================================
+// MEMORY DELETION
+// ============================================================
+
+function getMemoryDeletionKey(message) {
+
+    const text =
+        message
+            .trim()
+            .toLowerCase()
+            .replace(/[.!?]+$/, "");
+
+    const patterns = [
+
+        {
+            regex:
+                /^forget (that )?my favorite project( is .+)?$/i,
+
+            key:
+                "user_favorite_project"
+        },
+
+        {
+            regex:
+                /^forget (that )?i (work as|am) .+$/i,
+
+            key:
+                "user_job_role"
+        },
+
+        {
+            regex:
+                /^forget my job role$/i,
+
+            key:
+                "user_job_role"
+        },
+
+        {
+            regex:
+                /^forget (that )?i am building nexus ai$/i,
+
+            key:
+                "user_building_nexus_ai"
+        },
+
+        {
+            regex:
+                /^forget (that )?i use articulate storyline$/i,
+
+            key:
+                "user_uses_articulate_storyline"
+        },
+
+        {
+            regex:
+                /^forget my coding preference$/i,
+
+            key:
+                "user_coding_preference"
+        }
+
+    ];
+
+    for (
+        const pattern
+        of patterns
+    ) {
+
+        if (
+            pattern.regex.test(text)
+        ) {
+
+            return pattern.key;
+        }
+    }
+
+    return null;
+}
+
+
+// ============================================================
+// EXPLICIT MEMORY STATEMENT
+// ============================================================
+
+function isExplicitMemoryStatement(message) {
+
+    const text =
+        message.trim();
+
+    const patterns = [
+
+        /^i am\b/i,
+        /^i'm\b/i,
+
+        /^i work\b/i,
+        /^i use\b/i,
+
+        /^i prefer\b/i,
+        /^i like\b/i,
+        /^i dislike\b/i,
+
+        /^i want\b/i,
+        /^i need\b/i,
+        /^i have\b/i,
+
+        /^i'm building\b/i,
+        /^i am building\b/i,
+
+        /^my goal\b/i,
+        /^my project\b/i,
+
+        /^my preference\b/i,
+
+        /^my favorite\b/i,
+        /^my favourite\b/i,
+
+        /^i'm working\b/i,
+        /^i am working\b/i,
+
+        /^i'm now\b/i,
+        /^i am now\b/i,
+
+        /^my .* is\b/i,
+        /^my .* are\b/i
+
+    ];
+
+    return patterns.some(
+        pattern =>
+            pattern.test(text)
+    );
+}
+
+
+// ============================================================
+// BUILD MEMORY RESPONSE
+// ============================================================
+
+function buildMemoryResponse() {
+
+    const memories =
+        memory.getAllMemories();
+
+    if (
+        memories.length === 0
+    ) {
+
+        return (
+            "I don't currently have any " +
+            "saved memories about you."
+        );
+    }
+
+    const lines =
+        memories.map(
+            item => {
+
+                let value =
+                    item.value;
+
+                value =
+                    value.replace(
+                        /^The user is /i,
+                        "You are "
+                    );
+
+                value =
+                    value.replace(
+                        /^User is /i,
+                        "You are "
+                    );
+
+                value =
+                    value.replace(
+                        /^The user's /i,
+                        "Your "
+                    );
+
+                value =
+                    value.replace(
+                        /^The user has /i,
+                        "You have "
+                    );
+
+                value =
+                    value.replace(
+                        /^The user likes /i,
+                        "You like "
+                    );
+
+                value =
+                    value.replace(
+                        /^The user prefers /i,
+                        "You prefer "
+                    );
+
+                return `- ${value}`;
+            }
+        );
+
+    return [
+        "Here is what I currently remember about you:",
+        "",
+        ...lines
+    ].join("\n");
+}
+
+
+// ============================================================
+// GET CONVERSATION
+// ============================================================
+
+function getConversationText(limit = 10) {
+
+    const conversation =
+        database.getConversation();
+
+    const recentConversation =
+        conversation.slice(-limit);
+
+    return recentConversation
+        .map(
+            item =>
+                `${item.role}: ${item.content}`
+        )
+        .join("\n");
+}
+
+
+// ============================================================
+// GET MEMORY TEXT
+// ============================================================
+
+function getMemoryText() {
+
+    const memories =
+        memory.getAllMemories();
+
+    return memories
+        .map(
+            item =>
+                `${item.key}: ${item.value}`
+        )
+        .join("\n");
+}
+
+
+// ============================================================
+// FAST SIMPLE RESPONSE
+// ============================================================
+
+function getFastSimpleResponse(message) {
+
+    const text =
+        message
+            .trim()
+            .toLowerCase();
+
+    if (
+        /^(hi|hello|hey)$/i.test(text)
+    ) {
+
+        return "Hello! How can I assist you?";
+    }
+
+    if (
+        /^(good morning|good afternoon|good evening)$/i.test(text)
+    ) {
+
+        return "Hello! How can I assist you today?";
+    }
+
+    if (
+        /^(thanks|thank you)$/i.test(text)
+    ) {
+
+        return "You're welcome!";
+    }
+
+    return null;
+}
+
+
+// ============================================================
+// FAST REQUEST CLASSIFICATION
+// ============================================================
+
+function getFastRequestType(message) {
+
+    const text =
+        message
+            .trim()
+            .toLowerCase();
+
+    // --------------------------------------------------------
+    // WEB REQUEST
+    // --------------------------------------------------------
+
+    const webPatterns = [
+
+        /\bsearch the web\b/,
+        /\bsearch online\b/,
+        /\bsearch the internet\b/,
+        /\blook (it )?up online\b/,
+        /\bfind online\b/,
+        /\bonline resources\b/,
+        /\blatest\b/,
+        /\bcurrent news\b/,
+        /\brecent news\b/,
+        /\bnews about\b/,
+        /\bon the internet\b/
+
+    ];
+
+    if (
+        webPatterns.some(
+            pattern =>
+                pattern.test(text)
+        )
+    ) {
+
+        return "web";
+    }
+
+
+    // --------------------------------------------------------
+    // DOCUMENT LIST
+    // --------------------------------------------------------
+
+    const documentPatterns = [
+
+        /\bwhat documents do i have\b/,
+        /\bwhat files do i have\b/,
+        /\bshow my documents\b/,
+        /\blist my documents\b/,
+        /\blist my files\b/,
+        /\bwhich documents are available\b/,
+        /\bwhich files are available\b/
+
+    ];
+
+    if (
+        documentPatterns.some(
+            pattern =>
+                pattern.test(text)
+        )
+    ) {
+
+        return "documents";
+    }
+
+
+    // --------------------------------------------------------
+    // NEXUS STATUS
+    // --------------------------------------------------------
+
+    const statusPatterns = [
+
+        /\bis nexus running\b/,
+        /\bis nexus online\b/,
+        /\bnexus status\b/,
+        /\bcheck nexus status\b/,
+        /\bis nexus ai running\b/,
+        /\bis nexus ai online\b/
+
+    ];
+
+    if (
+        statusPatterns.some(
+            pattern =>
+                pattern.test(text)
+        )
+    ) {
+
+        return "status";
+    }
+
+
+    // --------------------------------------------------------
+    // DOCUMENT / KNOWLEDGE QUESTION
+    // --------------------------------------------------------
+
+    const documentQuestionPatterns = [
+
+        /\baccording to the document\b/,
+        /\baccording to the documents\b/,
+        /\bin the document\b/,
+        /\bin the documents\b/,
+        /\bfrom the document\b/,
+        /\bfrom the documents\b/,
+        /\bwhat does the document say\b/,
+        /\bwhat do the documents say\b/,
+        /\bwhat does my document say\b/,
+        /\bwhat do my documents say\b/,
+        /\bwhat does the pdf say\b/,
+        /\bwhat does the file say\b/
+
+    ];
+
+    if (
+        documentQuestionPatterns.some(
+            pattern =>
+                pattern.test(text)
+        )
+    ) {
+
+        return "rag";
+    }
+
+
+    // --------------------------------------------------------
+    // DEFAULT
+    // --------------------------------------------------------
+
+    return "direct";
+}
+
+
+// ============================================================
+// CREATE NEXUS MCP CLIENT
+// ============================================================
+
+async function createNexusClient() {
+
+    const client =
+        new Client(
+            {
+                name:
+                    "nexus-ai-client",
+
+                version:
+                    "1.0.0"
+            },
+
+            {
+                capabilities: {}
+            }
+        );
+
+    const transport =
+        new StdioClientTransport(
+            {
+                command:
+                    "node",
+
+                args: [
+                    "mcp-server.js"
+                ]
+            }
+        );
+
+    await client.connect(
+        transport
+    );
+
+    return client;
+}
+
+
+// ============================================================
+// CREATE WEB MCP CLIENT
+// ============================================================
+
+async function createWebClient() {
+
+    const client =
+        new Client(
+            {
+                name:
+                    "nexus-web-client",
+
+                version:
+                    "1.0.0"
+            },
+
+            {
+                capabilities: {}
+            }
+        );
+
+    const transport =
+        new StdioClientTransport(
+            {
+                command:
+                    "node",
+
+                args: [
+                    "web-search-mcp-server.js"
+                ]
+            }
+        );
+
+    await client.connect(
+        transport
+    );
+
+    return client;
+}
+
+
+// ============================================================
+// CHAT API
+// ============================================================
+
+app.post(
+    "/api/chat",
+    async (req, res) => {
+
+        try {
+
+            const userMessage =
+                req.body.message;
+
+            if (
+                !userMessage ||
+                !userMessage.trim()
+            ) {
+
+                return res.status(400).json({
+                    error:
+                        "Message is required."
+                });
+            }
+
+            console.log(
+                "\n========================================"
+            );
+
+            console.log(
+                "USER:"
+            );
+
+            console.log(
+                userMessage
+            );
+
+            console.log(
+                "========================================"
+            );
+
+
+            // ------------------------------------------------
+            // SAVE USER MESSAGE
+            // ------------------------------------------------
+
+            database.saveMessage(
+                "user",
+                userMessage
+            );
+
+
+            // ------------------------------------------------
+            // MEMORY DELETION
+            // ------------------------------------------------
+
+            const deletionKey =
+                getMemoryDeletionKey(
+                    userMessage
+                );
+
+            if (deletionKey) {
+
+                console.log(
+                    `Memory deletion: ${deletionKey}`
+                );
+
+                memory.deleteMemory(
+                    deletionKey
+                );
+
+                const response =
+                    "Done. I have forgotten that memory.";
+
+                database.saveMessage(
+                    "assistant",
+                    response
+                );
+
+                return res.json({
+                    answer: response
+                });
+            }
+
+
+            // ------------------------------------------------
+            // MEMORY QUESTION
+            // ------------------------------------------------
+
+            if (
+                isMemoryQuestion(
+                    userMessage
+                )
+            ) {
+
+                console.log(
+                    "Memory question detected."
+                );
+
+                const response =
+                    buildMemoryResponse();
+
+                database.saveMessage(
+                    "assistant",
+                    response
+                );
+
+                return res.json({
+                    answer: response
+                });
+            }
+
+
+            // ------------------------------------------------
+            // EXPLICIT MEMORY STATEMENT
+            // ------------------------------------------------
+
+            if (
+                isExplicitMemoryStatement(
+                    userMessage
+                )
+            ) {
+
+                console.log(
+                    "Explicit memory statement detected."
+                );
+
+                try {
+
+                    const memoryResult =
+                        await extractMemories(
+                            userMessage
+                        );
+
+                    if (
+                        memoryResult &&
+                        Array.isArray(
+                            memoryResult.memories
+                        )
+                    ) {
+
+                        for (
+                            const item
+                            of memoryResult.memories
+                        ) {
+
+                            if (
+                                !item.key ||
+                                !item.value
+                            ) {
+
+                                continue;
+                            }
+
+                            const normalizedKey =
+                                normalizeMemoryKey(
+                                    item.key
+                                );
+
+                            console.log(
+                                `Saving memory: ${normalizedKey}`
+                            );
+
+                            memory.saveMemory(
+                                normalizedKey,
+                                item.value
+                            );
+
+                            if (
+                                normalizedKey !==
+                                item.key
+                            ) {
+
+                                memory.deleteMemory(
+                                    item.key
+                                );
+                            }
+                        }
+                    }
+
+                } catch (
+                    error
+                ) {
+
+                    console.error(
+                        "Memory extraction error:",
+                        error.message
+                    );
+                }
+
+                console.log(
+    "Memory statement handled directly."
+);
+
+const response =
+    "Got it. I've saved that to my long-term memory.";
+
+database.saveMessage(
+    "assistant",
+    response
+);
+
+return res.json({
+    answer: response
+});
+            }
+
+
+            // =================================================
+            // FAST SIMPLE RESPONSE
+            // =================================================
+
+            const simpleResponse =
+                getFastSimpleResponse(
+                    userMessage
+                );
+
+            if (simpleResponse) {
+
+                console.log(
+                    "Fast simple response."
+                );
+
+                database.saveMessage(
+                    "assistant",
+                    simpleResponse
+                );
+
+                return res.json({
+                    answer:
+                        simpleResponse
+                });
+            }
+
+
+            // =================================================
+            // FAST REQUEST TYPE
+            // =================================================
+
+            const requestType =
+                getFastRequestType(
+                    userMessage
+                );
+
+            console.log(
+                `Fast request type: ${requestType}`
+            );
+
+
+            // =================================================
+            // DIRECT ANSWER
+            // =================================================
+
+            if (
+                requestType === "direct"
+            ) {
+
+                console.log(
+                    "Direct answer path."
+                );
+
+                const response =
+                    await generateAnswer(
+                        userMessage,
+                        "",
+                        getMemoryText(),
+                        getConversationText(),
+                        ""
+                    );
+
+                database.saveMessage(
+                    "assistant",
+                    response
+                );
+
+                return res.json({
+                    answer: response
+                });
+            }
+
+
+            // =================================================
+            // MEMORY
+            // =================================================
+
+            const memoryText =
+                getMemoryText();
+
+
+            // =================================================
+            // WEB SEARCH
+            // =================================================
+
+            if (
+                requestType === "web"
+            ) {
+
+                console.log(
+                    "Web request detected."
+                );
+
+                let webClient =
+                    null;
+
+                try {
+
+                    webClient =
+                        await createWebClient();
+
+                    const webTools =
+                        await webClient.listTools();
+
+                    const decision =
+                        await decideAction(
+                            userMessage,
+                            webTools.tools || []
+                        );
+
+                    console.log(
+                        "Agent decision:",
+                        decision
+                    );
+
+                    if (
+                        decision.action !==
+                            "web_search"
+                    ) {
+
+                        const answer =
+                            await generateAnswer(
+                                userMessage,
+                                "",
+                                memoryText,
+                                getConversationText(),
+                                ""
+                            );
+
+                        database.saveMessage(
+                            "assistant",
+                            answer
+                        );
+
+                        return res.json({
+                            answer
+                        });
+                    }
+
+                    const result =
+                        await webClient.callTool(
+                            {
+                                name:
+                                    "web_search",
+
+                                arguments: {
+                                    query:
+                                        decision.query ||
+                                        userMessage
+                                }
+                            }
+                        );
+
+                    const answer =
+                        await generateAnswer(
+                            userMessage,
+                            "",
+                            memoryText,
+                            getConversationText(),
+                            JSON.stringify(
+                                result
+                            )
+                        );
+
+                    database.saveMessage(
+                        "assistant",
+                        answer
+                    );
+
+                    return res.json({
+                        answer
+                    });
+
+                } finally {
+
+                    if (
+                        webClient
+                    ) {
+
+                        try {
+
+                            await webClient.close();
+
+                        } catch (
+                            error
+                        ) {
+
+                            console.error(
+                                "Web MCP close error:",
+                                error.message
+                            );
+                        }
+                    }
+                }
+            }
+
+
+            // =================================================
+            // DOCUMENT LIST
+            // =================================================
+
+            if (
+                requestType === "documents"
+            ) {
+
+                console.log(
+                    "Document list request detected."
+                );
+
+                let nexusClient =
+                    null;
+
+                try {
+
+                    nexusClient =
+                        await createNexusClient();
+
+                    const result =
+                        await nexusClient.callTool(
+                            {
+                                name:
+                                    "list_documents",
+
+                                arguments: {}
+                            }
+                        );
+
+                    const answer =
+                        await generateAnswer(
+                            userMessage,
+                            "",
+                            memoryText,
+                            getConversationText(),
+                            JSON.stringify(
+                                result
+                            )
+                        );
+
+                    database.saveMessage(
+                        "assistant",
+                        answer
+                    );
+
+                    return res.json({
+                        answer
+                    });
+
+                } finally {
+
+                    if (
+                        nexusClient
+                    ) {
+
+                        try {
+
+                            await nexusClient.close();
+
+                        } catch (
+                            error
+                        ) {
+
+                            console.error(
+                                "Nexus MCP close error:",
+                                error.message
+                            );
+                        }
+                    }
+                }
+            }
+
+
+            // =================================================
+            // NEXUS STATUS
+            // =================================================
+
+            if (
+                requestType === "status"
+            ) {
+
+                console.log(
+                    "Nexus status request detected."
+                );
+
+                let nexusClient =
+                    null;
+
+                try {
+
+                    nexusClient =
+                        await createNexusClient();
+
+                    const result =
+                        await nexusClient.callTool(
+                            {
+                                name:
+                                    "get_nexus_status",
+
+                                arguments: {}
+                            }
+                        );
+
+                    const answer =
+                        await generateAnswer(
+                            userMessage,
+                            "",
+                            memoryText,
+                            getConversationText(),
+                            JSON.stringify(
+                                result
+                            )
+                        );
+
+                    database.saveMessage(
+                        "assistant",
+                        answer
+                    );
+
+                    return res.json({
+                        answer
+                    });
+
+                } finally {
+
+                    if (
+                        nexusClient
+                    ) {
+
+                        try {
+
+                            await nexusClient.close();
+
+                        } catch (
+                            error
+                        ) {
+
+                            console.error(
+                                "Nexus MCP close error:",
+                                error.message
+                            );
+                        }
+                    }
+                }
+            }
+
+
+            // =================================================
+            // RAG
+            // =================================================
+
+            if (
+                requestType === "rag"
+            ) {
+
+                console.log(
+                    "Running RAG..."
+                );
+
+                const ragResults =
+                    await retrieveContext(
+                        userMessage,
+                        5
+                    );
+
+                console.log(
+                    `RAG results: ${ragResults.length}`
+                );
+
+                const context =
+                    buildContext(
+                        ragResults
+                    );
+
+                const answer =
+                    await generateAnswer(
+                        userMessage,
+                        context,
+                        memoryText,
+                        getConversationText(),
+                        ""
+                    );
+
+                database.saveMessage(
+                    "assistant",
+                    answer
+                );
+
+                return res.json({
+                    answer
+                });
+            }
+
+
+            // =================================================
+            // FALLBACK
+            // =================================================
+
+            const answer =
+                await generateAnswer(
+                    userMessage,
+                    "",
+                    memoryText,
+                    getConversationText(),
+                    ""
+                );
+
+            database.saveMessage(
+                "assistant",
+                answer
+            );
+
+            return res.json({
+                answer
+            });
+
+        } catch (
+            error
+        ) {
+
+            console.error(
+                "\nNEXUS AI ERROR:"
+            );
+
+            console.error(
+                error
+            );
+
+            return res.status(500).json({
+                error:
+                    error.message ||
+                    "Something went wrong."
+            });
+        }
+    }
+);
+
+
+// ============================================================
+// GET MEMORIES
+// ============================================================
+
+app.get(
+    "/api/memories",
+    (req, res) => {
+
+        try {
+
+            const memories =
+                memory.getAllMemories();
+
+            res.json({
+                memories
+            });
+
+        } catch (
+            error
+        ) {
+
+            console.error(
+                error
+            );
+
+            res.status(500).json({
+                error:
+                    error.message
+            });
+        }
+    }
+);
+
+
+// ============================================================
+// CLEAR CONVERSATION
+// ============================================================
+
+app.post(
+    "/api/clear",
+    (req, res) => {
+
+        try {
+
+            database.clearConversation();
+
+            res.json({
+                success: true
+            });
+
+        } catch (
+            error
+        ) {
+
+            console.error(
+                error
+            );
+
+            res.status(500).json({
+                error:
+                    error.message
+            });
+        }
+    }
+);
+
+
+// ============================================================
+// START SERVER
+// ============================================================
+
+app.listen(
+    PORT,
+    () => {
+
+        console.log(
+            "========================================"
+        );
+
+        console.log(
+            "Nexus AI is running"
+        );
+
+        console.log(
+            `http://localhost:${PORT}`
+        );
+
+        console.log(
+            `Model: ${MODEL}`
+        );
+
+        console.log(
+            "========================================"
+        );
+    }
+);

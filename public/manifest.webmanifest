@@ -1,0 +1,21 @@
+{
+  "id": "/",
+  "name": "Jarwis",
+  "short_name": "Jarwis",
+  "description": "Your private, local-first AI assistant for chat, tools, memory, and work.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#fbfaf7",
+  "theme_color": "#14766d",
+  "categories": ["productivity", "utilities"],
+  "icons": [
+    {
+      "src": "/jarwis-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

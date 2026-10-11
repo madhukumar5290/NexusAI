@@ -1,0 +1,16 @@
+.git
+.github
+.vscode
+.env
+.env.*
+node_modules
+data
+release
+coverage
+playwright-report
+test-results
+*.log
+*.orig
+*.db
+*.db-shm
+*.db-wal

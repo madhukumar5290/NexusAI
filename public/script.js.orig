@@ -1,0 +1,5326 @@
+/* =========================================================
+   NEXUS AI 4.0
+   Chat + Streaming + Workspace + Artifacts
+   + Agent Activity + Preview + Verification
+========================================================= */
+
+const API_BASE = "";
+
+let conversations = [];
+let activeConversationId = null;
+let activeProjectId = null;
+
+let isSending = false;
+let activeAbortController = null;
+let activeAssistantElement = null;
+
+let workspaceOpen =
+    localStorage.getItem("nexus-workspace-open") === "true";
+let workspaceFiles = [];
+let selectedFilePath = null;
+let selectedFileContent = "";
+
+
+/* =========================================================
+   DOM
+========================================================= */
+
+const conversationList =
+    document.getElementById("conversationList");
+
+const chatTitle =
+    document.getElementById("chatTitle");
+
+const messages =
+    document.getElementById("messages");
+
+const messageInput =
+    document.getElementById("messageInput");
+
+const sendButton =
+    document.getElementById("sendButton");
+
+const attachmentButton =
+    document.getElementById("attachmentButton");
+
+const attachmentInput =
+    document.getElementById("attachmentInput");
+
+const toolsButton =
+    document.getElementById("toolsButton");
+
+const thinkButton =
+    document.getElementById("thinkButton");
+
+const webSearchButton =
+    document.getElementById("webSearchButton");
+
+const imageButton =
+    document.getElementById("imageButton");
+
+const voiceButton =
+    document.getElementById("voiceButton");
+
+const sidebarNavItems =
+    document.querySelectorAll("[data-view]");
+
+const modeTabs =
+    document.querySelectorAll("[data-mode]");
+
+const newChatButton =
+    document.getElementById("newChatButton");
+
+const searchInput =
+    document.getElementById("searchInput");
+
+const renameModal =
+    document.getElementById("renameModal");
+
+const renameChatInput =
+    document.getElementById("renameChatInput");
+
+const workspacePanel =
+    document.getElementById("workspacePanel");
+
+const workspaceTabs =
+    document.querySelectorAll("[data-workspace-section]");
+
+const workspaceSections = {
+    activity:
+        document.getElementById("workspaceActivitySection"),
+    files:
+        document.getElementById("workspaceFilesSection"),
+    preview:
+        document.getElementById("workspacePreviewSection")
+};
+
+const workspaceToggle =
+    document.getElementById("workspaceToggle");
+
+const sidebarToggle =
+    document.getElementById("sidebarToggle");
+
+const sidebar =
+    document.querySelector(".sidebar");
+
+const workspaceHeaderButton =
+    document.getElementById("workspaceHeaderButton");
+
+const accountSettingsButton =
+    document.getElementById("accountSettingsButton");
+
+const workspaceClose =
+    document.getElementById("workspaceClose");
+
+const workspaceTree =
+    document.getElementById("workspaceTree");
+
+const fileCount =
+    document.getElementById("fileCount");
+
+const agentActivity =
+    document.getElementById("agentActivity");
+
+const activityState =
+    document.getElementById("activityState");
+
+const agentStatus =
+    document.getElementById("agentStatus");
+
+function setAgentStatusClass(className) {
+    if (agentStatus) agentStatus.className = className;
+}
+
+const projectInfo =
+    document.getElementById("projectInfo");
+
+const workspaceSubtitle =
+    document.getElementById("workspaceSubtitle");
+
+const fileEditorSection =
+    document.getElementById("fileEditorSection");
+
+const selectedFileName =
+    document.getElementById("selectedFileName");
+
+const fileEditor =
+    document.getElementById("fileEditor");
+
+const saveFileButton =
+    document.getElementById("saveFileButton");
+
+const closeFileButton =
+    document.getElementById("closeFileButton");
+
+const refreshWorkspaceButton =
+    document.getElementById("refreshWorkspace");
+
+const previewContainer =
+    document.getElementById("previewContainer");
+
+const openPreviewButton =
+    document.getElementById("openPreviewButton");
+
+const refreshPreviewButton =
+    document.getElementById("refreshPreviewButton");
+
+const verificationPanel =
+    document.getElementById("verificationPanel");
+
+const controlCenterButton =
+    document.getElementById("controlCenterButton");
+
+const controlCenterModal =
+    document.getElementById("controlCenterModal");
+
+const controlCenterBody =
+    document.getElementById("controlCenterBody");
+
+const modelSelector =
+    document.getElementById("modelSelector");
+
+const intelligenceSelector =
+    document.getElementById("intelligenceSelector");
+
+let selectedModelConfig = {
+    provider: null,
+    model: null
+};
+
+let advancedExecutionConfig = {};
+try {
+    advancedExecutionConfig = JSON.parse(localStorage.getItem("nexus-advanced-execution") || "{}");
+} catch {
+    advancedExecutionConfig = {};
+}
+
+function advancedRequestOptions() {
+    if (!advancedExecutionConfig.enabled) return {};
+    const output = {};
+    ["temperature", "maxTokens", "maxAgentSteps"].forEach(key => {
+        const value = Number(advancedExecutionConfig[key]);
+        if (advancedExecutionConfig[key] !== "" && Number.isFinite(value)) output[key] = value;
+    });
+    return output;
+}
+
+let speechRecognition = null;
+let voiceChatMode = false;
+let thinkMode = false;
+let webSearchMode = false;
+
+const sidebarCollapsed =
+    localStorage.getItem("nexus-sidebar-collapsed") === "true";
+
+if (sidebarCollapsed) {
+    sidebar.classList.add("collapsed");
+    sidebarToggle.setAttribute("aria-expanded", "false");
+}
+
+intelligenceSelector.value =
+    localStorage.getItem("nexus-intelligence") ||
+    "balanced";
+
+
+/* =========================================================
+   STARTUP
+========================================================= */
+
+document.addEventListener(
+    "DOMContentLoaded",
+    async () => {
+
+        workspacePanel.classList.toggle(
+            "closed",
+            !workspaceOpen
+        );
+
+        setupEvents();
+
+        await loadChats();
+
+        await refreshWorkspace();
+
+        await loadCapabilities();
+
+        autoResizeTextarea();
+
+    }
+);
+
+intelligenceSelector.addEventListener(
+    "change",
+    () => {
+        localStorage.setItem(
+            "nexus-intelligence",
+            intelligenceSelector.value
+        );
+    }
+);
+
+
+/* =========================================================
+   EVENTS
+========================================================= */
+
+function setupEvents() {
+
+    sidebarNavItems.forEach(item => {
+        item.addEventListener("click", () => {
+            sidebarNavItems.forEach(navItem => {
+                navItem.classList.toggle(
+                    "active",
+                    navItem === item
+                );
+            });
+
+            const view =
+                item.getAttribute("data-view");
+
+            showProductView(view);
+        });
+    });
+
+    modeTabs.forEach(tab => {
+        tab.addEventListener("click", () => {
+            modeTabs.forEach(modeTab => {
+                modeTab.classList.toggle(
+                    "active",
+                    modeTab === tab
+                );
+            });
+
+            if (tab.getAttribute("data-mode") === "work") {
+                showProductView("projects");
+            }
+        });
+    });
+
+    attachmentButton.addEventListener(
+        "click",
+        event => {
+            event.stopPropagation();
+            showAttachmentMenu();
+        }
+    );
+
+    attachmentInput.addEventListener(
+        "change",
+        async () => {
+            const files =
+                Array.from(attachmentInput.files || []);
+
+            if (!files.length) {
+                return;
+            }
+
+            attachmentButton.disabled = true;
+            attachmentButton.textContent = "…";
+
+            try {
+                const payload = await Promise.all(
+                    files.map(file => readFileForUpload(file))
+                );
+
+                const response = await apiRequest(
+                    "/api/workspace/upload",
+                    {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json"
+                        },
+                        body: JSON.stringify({
+                            files: payload,
+                            projectId: activeProjectId
+                        })
+                    }
+                );
+
+                const result = await response.json();
+                const uploaded =
+                    (result.files || []).map(file => file.path);
+
+                messageInput.placeholder =
+                    `${uploaded.length} file${uploaded.length === 1 ? "" : "s"} added to workspace. Add a message...`;
+
+                await refreshWorkspace();
+                showCapabilityNotice(
+                    `${uploaded.length} file${uploaded.length === 1 ? "" : "s"} added to the workspace.`
+                );
+            } catch (error) {
+                showCapabilityNotice(
+                    `File upload failed: ${error.message}`
+                );
+            } finally {
+                attachmentButton.disabled = false;
+                attachmentButton.textContent = "+";
+                attachmentInput.value = "";
+            }
+        }
+    );
+
+    toolsButton.addEventListener(
+        "click",
+        () => {
+            const expanded =
+                toolsButton.getAttribute("aria-expanded") === "true";
+
+            toolsButton.setAttribute(
+                "aria-expanded",
+                String(!expanded)
+            );
+
+            document.addEventListener(
+                "click",
+                event => {
+                    if (
+                        !event.target.closest(
+                            ".attachment-menu, #attachmentButton"
+                        )
+                    ) {
+                        document
+                            .querySelector(".attachment-menu")
+                            ?.remove();
+                    }
+                }
+            );
+
+            toolsButton.classList.toggle(
+                "active",
+                !expanded
+            );
+        }
+    );
+
+    thinkButton.addEventListener("click", () => {
+        thinkMode = !thinkMode;
+        thinkButton.setAttribute("aria-pressed", String(thinkMode));
+        thinkButton.classList.toggle("active", thinkMode);
+        if (thinkMode) {
+            intelligenceSelector.value = "high";
+        }
+    });
+
+    webSearchButton.addEventListener("click", () => {
+        webSearchMode = !webSearchMode;
+        webSearchButton.setAttribute("aria-pressed", String(webSearchMode));
+        webSearchButton.classList.toggle("active", webSearchMode);
+    });
+
+    imageButton.addEventListener("click", () => {
+        showCapabilityNotice(
+            "Image creation requires a configured image provider. Connect one in Settings."
+        );
+        openControlCenter();
+    });
+
+    workspaceTabs.forEach(tab => {
+        tab.addEventListener("click", () => {
+            const section =
+                workspaceSections[
+                    tab.getAttribute("data-workspace-section")
+                ];
+
+            if (!section) {
+                return;
+            }
+
+            workspaceTabs.forEach(item => {
+                item.classList.toggle(
+                    "active",
+                    item === tab
+                );
+            });
+
+            section.scrollIntoView({
+                behavior: "smooth",
+                block: "start"
+            });
+        });
+    });
+
+    sidebarToggle.addEventListener(
+        "click",
+        () => {
+            const collapsed =
+                sidebar.classList.toggle("collapsed");
+
+            sidebarToggle.setAttribute(
+                "aria-expanded",
+                String(!collapsed)
+            );
+
+            localStorage.setItem(
+                "nexus-sidebar-collapsed",
+                String(collapsed)
+            );
+        }
+    );
+
+    newChatButton.addEventListener(
+        "click",
+        async () => {
+
+            if (isSending) {
+                stopGeneration();
+            }
+
+            await createNewChat();
+
+        }
+    );
+
+
+    sendButton.addEventListener(
+        "click",
+        async () => {
+
+            if (isSending) {
+                stopGeneration();
+                return;
+            }
+
+            await sendMessage();
+
+        }
+    );
+
+
+    messageInput.addEventListener(
+        "keydown",
+        async event => {
+
+            if (
+                event.key === "Enter" &&
+                !event.shiftKey
+            ) {
+
+                event.preventDefault();
+
+                if (!isSending) {
+                    await sendMessage();
+                }
+
+            }
+
+        }
+    );
+
+
+    messageInput.addEventListener(
+        "input",
+        autoResizeTextarea
+    );
+
+
+    searchInput.addEventListener(
+        "input",
+        () => {
+
+            renderConversations(
+                searchInput.value.trim()
+            );
+
+        }
+    );
+
+
+    if (workspaceToggle) {
+        workspaceToggle.addEventListener(
+            "click",
+            toggleWorkspace
+        );
+    }
+
+    if (workspaceHeaderButton) {
+        workspaceHeaderButton.addEventListener(
+            "click",
+            toggleWorkspace
+        );
+    }
+
+    if (workspaceClose) {
+        workspaceClose.addEventListener(
+            "click",
+            toggleWorkspace
+        );
+    }
+
+
+    refreshWorkspaceButton.addEventListener(
+        "click",
+        refreshWorkspace
+    );
+
+
+    refreshPreviewButton.addEventListener(
+        "click",
+        refreshPreview
+    );
+
+
+    openPreviewButton.addEventListener(
+        "click",
+        openPreview
+    );
+
+    if (controlCenterButton) {
+        controlCenterButton.addEventListener(
+            "click",
+            openControlCenter
+        );
+    }
+
+    if (voiceButton) {
+        voiceButton.addEventListener(
+            "click",
+            toggleDictation
+        );
+    }
+
+    if (accountSettingsButton) {
+        accountSettingsButton.addEventListener(
+            "click",
+            openControlCenter
+        );
+    }
+
+
+    saveFileButton.addEventListener(
+        "click",
+        saveSelectedFile
+    );
+
+
+    closeFileButton.addEventListener(
+        "click",
+        closeFileEditor
+    );
+
+
+    document.addEventListener(
+        "click",
+        async event => {
+
+            const actionElement =
+                event.target.closest(
+                    "[data-action], [data-product-action], [data-integration-action]"
+                );
+
+            if (!actionElement) {
+                return;
+            }
+
+            const integrationAction =
+                actionElement.dataset.integrationAction;
+
+            if (integrationAction) {
+                const integrationId =
+                    actionElement.dataset.integrationId;
+                actionElement.disabled = true;
+                try {
+                    const response = await apiRequest(
+                        `/api/integrations/${encodeURIComponent(integrationId)}/${integrationAction}`,
+                        {
+                            method: "POST",
+                            headers: {
+                                "Content-Type": "application/json"
+                            },
+                            body: JSON.stringify({
+                                metadata: {
+                                    source: "settings"
+                                }
+                            })
+                        }
+                    );
+                    if (!response.ok) {
+                        throw new Error(
+                            await getResponseError(response)
+                        );
+                    }
+                    await loadCapabilities();
+                    showCapabilityNotice(
+                        `${integrationId} ${integrationAction}ed.`
+                    );
+                } catch (error) {
+                    showCapabilityNotice(
+                        `Integration action failed: ${error.message}`
+                    );
+                }
+                return;
+            }
+
+            const productAction =
+                actionElement.dataset.productAction;
+
+            if (productAction === "open-settings") {
+                openControlCenter();
+                return;
+            }
+
+            if (productAction === "open-work") {
+                modeTabs.forEach(tab => {
+                    tab.classList.toggle(
+                        "active",
+                        tab.getAttribute("data-mode") === "work"
+                    );
+                });
+                showCapabilityNotice(
+                    "Work mode is available in the composer."
+                );
+                return;
+            }
+
+            if (productAction === "new-project") {
+                const nameInput = document.getElementById("projectNameInput");
+                const name = nameInput?.value || "";
+                if (!name.trim()) {
+                    nameInput?.focus();
+                    showCapabilityNotice("Enter a project name first.");
+                    return;
+                }
+                try {
+                    const response = await apiRequest("/api/projects", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ name: name.trim() })
+                    });
+                    if (!response.ok) throw new Error(await getResponseError(response));
+                    const result = await response.json();
+                    activeProjectId = String(result.project.chatId);
+                    await selectChat(result.chat.id);
+                    showCapabilityNotice(`Project "${name.trim()}" created. Files uploaded here will stay in this project.`);
+                    showProductView("projects");
+                } catch (error) {
+                    showCapabilityNotice(`Project creation failed: ${error.message}`);
+                }
+                return;
+            }
+
+            if (productAction === "select-project") {
+                activeProjectId = actionElement.dataset.projectId;
+                await selectChat(activeProjectId);
+                return;
+            }
+
+            const action =
+                actionElement.dataset.action;
+
+
+            if (
+                action ===
+                "cancel-rename"
+            ) {
+
+                closeRenameModal();
+
+                return;
+
+            }
+
+
+            if (
+                action ===
+                "save-rename"
+            ) {
+
+                await saveRename();
+
+                return;
+
+            }
+
+
+            if (
+                action ===
+                "regenerate-response"
+            ) {
+
+                event.preventDefault();
+                event.stopPropagation();
+
+                await regenerateLastResponse();
+
+            }
+
+            if (
+                action ===
+                "close-control-center"
+            ) {
+                closeControlCenter();
+            }
+
+        }
+    );
+
+    renameChatInput.addEventListener(
+        "keydown",
+        async event => {
+
+            if (event.key === "Enter") {
+                event.preventDefault();
+                await saveRename();
+            }
+
+            if (event.key === "Escape") {
+                closeRenameModal();
+            }
+        }
+    );
+}
+
+function showProductView(view) {
+    if (view === "projects") {
+        chatTitle.textContent = "Projects";
+        messages.innerHTML = `
+            <div class="product-view">
+                <div class="product-view-header">
+                    <div>
+                        <h1>Projects</h1>
+                        <p>Keep chats, files, and instructions together.</p>
+                    </div>
+                    <div class="project-create-form">
+                        <input id="projectNameInput" type="text" placeholder="Project name" aria-label="Project name">
+                        <button type="button" class="modal-button primary" data-product-action="new-project">Create project</button>
+                    </div>
+                </div>
+                <div id="projectsList" class="product-list"><p>Loading projects...</p></div>
+            </div>
+        `;
+        apiRequest("/api/projects")
+            .then(response => response.json())
+            .then(data => {
+                const list = document.getElementById("projectsList");
+                const projects = data.projects || [];
+                list.innerHTML = projects.length
+                    ? projects.map(project => `
+                        <div class="product-card">
+                            <div class="product-card-icon">N</div>
+                            <div>
+                                <strong>${escapeHtml(project.name)}</strong>
+                                <p>${escapeHtml(project.goal || "Project workspace")} · ${escapeHtml(project.status)}</p>
+                            </div>
+                            <button type="button" class="capability-action-button" data-product-action="select-project" data-project-id="${escapeHtml(project.chatId)}">Open</button>
+                        </div>
+                    `).join("")
+                    : `<div class="product-card"><div><strong>No projects yet</strong><p>Create a project to keep its chats and uploads together.</p></div></div>`;
+            })
+            .catch(error => showCapabilityNotice(`Could not load projects: ${error.message}`));
+        return;
+    }
+
+    if (view === "scheduled") {
+        chatTitle.textContent = "Scheduled";
+        messages.innerHTML = `
+            <div class="product-view">
+                <div class="product-view-header">
+                    <div>
+                        <h1>Scheduled tasks</h1>
+                        <p>Run bounded automations with approval gates.</p>
+                    </div>
+                    <button type="button" class="modal-button primary" data-product-action="open-settings">Manage</button>
+                </div>
+                <div class="product-card">
+                    <div class="product-card-icon">◷</div>
+                    <div>
+                        <strong>Automation Center</strong>
+                        <p>Review research digests, workspace syncs, run history, and connector status in Settings.</p>
+                    </div>
+                </div>
+            </div>
+        `;
+        return;
+    }
+
+    if (view === "plugins" || view === "library" || view === "images") {
+        chatTitle.textContent =
+            view.charAt(0).toUpperCase() + view.slice(1);
+        messages.innerHTML = `
+            <div class="product-view">
+                <div class="product-view-header">
+                    <div>
+                        <h1>${escapeHtml(chatTitle.textContent)}</h1>
+                        <p>This Nexus surface is ready for connected providers and local files.</p>
+                    </div>
+                    <button type="button" class="modal-button primary" data-product-action="open-settings">Open settings</button>
+                </div>
+                <div class="product-card">
+                    <div class="product-card-icon">+</div>
+                    <div>
+                        <strong>Connect capabilities</strong>
+                        <p>Configure models, integrations, permissions, and runtime options from Settings.</p>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+}
+
+async function loadCapabilities() {
+            try {
+                const [response, metricsResponse] = await Promise.all([
+                    apiRequest("/api/capabilities"),
+                    apiRequest("/api/model-metrics")
+                ]);
+                const capabilities = await response.json();
+                const metrics = await metricsResponse.json();
+                renderCapabilities(capabilities, metrics.metrics || []);
+            } catch (error) {
+                console.error(error);
+                controlCenterBody.innerHTML =
+                    `<div class="capability-error">${escapeHtml(
+                        error.message
+                    )}</div>`;
+            }
+        }
+
+        function openControlCenter() {
+            controlCenterModal.classList.add("open");
+            controlCenterModal.setAttribute("aria-hidden", "false");
+            loadCapabilities();
+        }
+
+        function closeControlCenter() {
+            controlCenterModal.classList.remove("open");
+            controlCenterModal.setAttribute("aria-hidden", "true");
+        }
+
+        function renderCapabilities(data, modelMetrics = []) {
+            const providers = data.providers || [];
+            const roles = data.roles || [];
+            const models = data.models || [];
+            const tools = data.tools || [];
+            const agents = data.agents || [];
+            const automations = data.automations || [];
+            const integrations = data.integrations || [];
+            const permissions = data.permissions || {};
+            const features = data.features || {};
+            const active = data.active || {};
+
+            const storedRole =
+                localStorage.getItem("nexus-model-role") || "auto";
+
+            const availableModels = models.filter(model =>
+                model.configured && model.available
+            );
+            const catalogOptions = models.map(model => `
+                <option
+                    value="model:${escapeHtml(model.provider)}:${escapeHtml(model.model)}"
+                    ${storedRole === `model:${model.provider}:${model.model}` ? "selected" : ""}
+                    ${model.configured && model.available ? "" : "disabled"}
+                >
+                    ${escapeHtml(model.provider)} · ${escapeHtml(model.model)}
+                </option>
+            `).join("");
+
+            modelSelector.innerHTML = `
+                <option value="auto" ${storedRole === "auto" ? "selected" : ""}>
+                    Auto · Nexus chooses
+                </option>
+                <optgroup label="Task presets">
+                ${roles.map(role => `
+                <option value="${escapeHtml(role.role)}" ${
+                    role.role === storedRole ? "selected" : ""
+                }>
+                    ${escapeHtml(role.role)} · ${escapeHtml(role.model)}
+                </option>
+                `).join("")}
+                </optgroup>
+                <optgroup label="Available models">
+                    ${catalogOptions || `<option disabled>No configured models</option>`}
+                </optgroup>`;
+
+            if (storedRole === "auto") {
+                selectedModelConfig = { provider: null, model: null };
+            }
+
+            const selectedRole =
+                roles.find(role => role.role === storedRole) ||
+                roles.find(role => role.role === "chat") ||
+                roles[0];
+
+            selectedModelConfig = storedRole === "auto"
+                ? { provider: null, model: null }
+                : selectedRole
+                ? {
+                    provider: selectedRole.provider,
+                    model: selectedRole.model
+                }
+                : {
+                    provider: null,
+                    model: null
+                };
+
+            const providerCards = providers.map(provider => `
+                <div class="capability-card">
+                    <div class="capability-card-title">
+                        ${escapeHtml(provider.label || provider.name)}
+                        <span class="capability-badge ${
+                            provider.configured ? "ready" : ""
+                        }">
+                            ${provider.configured ? "Ready" : "Not configured"}
+                        </span>
+                    </div>
+                    <div class="capability-card-meta">
+                        ${escapeHtml(provider.name)} ·
+                        ${provider.local ? "Local" : "Remote"}
+                    </div>
+                </div>
+            `).join("");
+
+            const roleRows = roles.map(role => `
+                <div class="capability-row">
+                    <span>${escapeHtml(role.role)}</span>
+                    <strong>${escapeHtml(role.provider)} / ${
+                        escapeHtml(role.model)
+                    }</strong>
+                </div>
+            `).join("");
+
+            const modelCatalogRows = models.map(model => `
+                <div class="capability-row">
+                    <span>${escapeHtml(model.provider)} / ${escapeHtml(model.model)}</span>
+                    <strong class="${model.configured && model.available ? "capability-ready" : "capability-muted"}">
+                        ${model.configured && model.available ? "Available" : "Requires setup"}
+                    </strong>
+                </div>
+            `).join("");
+
+            const modelHealthRows = modelMetrics
+                .filter(metric => metric.configured && metric.available)
+                .map(metric => `
+                    <div class="capability-row">
+                        <span>${escapeHtml(metric.provider)} / ${escapeHtml(metric.model)}</span>
+                        <strong>${metric.attempts
+                            ? `${Math.round((metric.successRate || 0) * 100)}% success · ${metric.averageLatencyMs ?? "-"} ms`
+                            : "Awaiting requests"}</strong>
+                    </div>
+                `).join("") || `<div class="capability-row"><span>No configured models</span><strong class="capability-muted">Unavailable</strong></div>`;
+
+            const localModelRows = models
+                .filter(model => model.provider === "ollama" && model.configured && model.available)
+                .map(model => `
+                    <div class="capability-row">
+                        <span>${escapeHtml(model.model)}</span>
+                        <button type="button" class="capability-action-button" data-remove-local-model="${escapeHtml(model.model)}">Remove</button>
+                    </div>
+                `).join("") || `<div class="capability-row"><span>No local models discovered</span><strong class="capability-muted">Ollama unavailable</strong></div>`;
+
+            const toolRows = tools.map(tool => `
+                <div class="capability-row">
+                    <span>${escapeHtml(tool.name)}</span>
+                    <strong class="${
+                        tool.runnable ? "capability-ready" : "capability-muted"
+                    }">${tool.runnable ? "Runnable" : "Permission needed"}</strong>
+                </div>
+            `).join("");
+
+            const automationRows = automations.map(automation => `
+                <div class="capability-row">
+                    <span>${escapeHtml(automation.name)}</span>
+                    <span class="capability-row-actions">
+                        <strong>${escapeHtml(
+                            (automation.triggers || []).join(", ") || "manual"
+                        )}</strong>
+                        <button
+                            type="button"
+                            class="capability-action-button"
+                            data-run-automation="${escapeHtml(automation.name)}"
+                        >Run</button>
+                    </span>
+                </div>
+            `).join("");
+
+            const agentRows = agents.map(agent => `
+                <div class="capability-row">
+                    <span>${escapeHtml(agent.name || agent.id)}</span>
+                    <strong>${escapeHtml(
+                        agent.builtin ? "Built-in" : "Custom"
+                    )}</strong>
+                </div>
+            `).join("");
+
+            const integrationRows = integrations.map(integration => `
+                <div class="capability-row">
+                    <span>${escapeHtml(integration.name || integration.id)}</span>
+                    <span class="capability-row-actions">
+                        <strong class="${
+                            integration.state?.status === "connected"
+                                ? "capability-ready"
+                                : "capability-muted"
+                        }">${escapeHtml(
+                            integration.state?.status || "disconnected"
+                        )}</strong>
+                        <button
+                            type="button"
+                            class="capability-action-button"
+                            data-integration-action="${
+                                integration.state?.status === "connected"
+                                    ? "disconnect"
+                                    : "connect"
+                            }"
+                            data-integration-id="${escapeHtml(integration.id)}"
+                        >${integration.state?.status === "connected" ? "Disconnect" : "Connect"}</button>
+                    </span>
+                </div>
+            `).join("");
+
+            const featureRows = Object.entries(features).map(
+                ([name, enabled]) => `
+                    <span class="feature-chip ${
+                        enabled ? "enabled" : "disabled"
+                    }">${escapeHtml(name)}: ${
+                        enabled ? "on" : "off"
+                    }</span>
+                `
+            ).join("");
+
+            controlCenterBody.innerHTML = `
+                <div class="settings-layout">
+                    <nav class="settings-nav" aria-label="Settings sections">
+                        <button class="settings-nav-item active" data-settings-section="general">General</button>
+                        <button class="settings-nav-item" data-settings-section="notifications">Notifications</button>
+                        <button class="settings-nav-item" data-settings-section="personalization">Personalization</button>
+                        <button class="settings-nav-item" data-settings-section="voice">Voice</button>
+                        <button class="settings-nav-item" data-settings-section="models">Models</button>
+                        <button class="settings-nav-item" data-settings-section="integrations">Integrations</button>
+                        <button class="settings-nav-item" data-settings-section="data">Data controls</button>
+                        <button class="settings-nav-item" data-settings-section="security">Security</button>
+                    </nav>
+                    <div class="settings-content">
+                <section class="settings-panel-section active" data-settings-panel="general">
+                    <h2>General</h2>
+                    <p class="settings-description">Configure how Nexus looks and behaves.</p>
+                <div class="settings-preferences">
+                    <div class="settings-preference">
+                        <label for="settings-theme"><strong>Theme</strong><small>Choose the appearance of Nexus.</small></label>
+                        <select id="settings-theme" class="settings-select" data-setting-key="theme">
+                            <option value="system">System</option>
+                            <option value="light">Light</option>
+                            <option value="dark">Dark</option>
+                        </select>
+                    </div>
+                    <div class="settings-preference">
+                        <label for="settings-language"><strong>Language</strong><small>Language preference for the interface.</small></label>
+                        <select id="settings-language" class="settings-select" data-setting-key="language">
+                            <option value="en">English</option>
+                        </select>
+                    </div>
+                    <div class="settings-preference">
+                        <label for="settings-intelligence"><strong>Default intelligence</strong><small>Used when a request does not specify a level.</small></label>
+                        <select id="settings-intelligence" class="settings-select" data-setting-key="intelligence">
+                            ${["auto", "fast", "balanced", "high", "very-high", "maximum"].map(level =>
+                                `<option value="${level}">${level.replace("-", " ")}</option>`
+                            ).join("")}
+                        </select>
+                    </div>
+                </div>
+                </section>
+                <section class="settings-panel-section" data-settings-panel="notifications">
+                    <h2>Notifications</h2><p class="settings-description">Choose which local browser notifications Nexus may show.</p>
+                    <div class="settings-preferences">
+                        <label class="settings-toggle"><span><strong>Task updates</strong><small>Notify when an automation or long task finishes.</small></span><input type="checkbox" data-setting-key="notifyTasks"></label>
+                        <label class="settings-toggle"><span><strong>Message notifications</strong><small>Notify when a response is ready while this tab is inactive.</small></span><input type="checkbox" data-setting-key="notifyMessages"></label>
+                        <label class="settings-toggle"><span><strong>Sound effects</strong><small>Play a subtle sound for completed actions.</small></span><input type="checkbox" data-setting-key="soundEffects"></label>
+                    </div>
+                </section>
+                <section class="settings-panel-section" data-settings-panel="personalization">
+                    <h2>Personalization</h2><p class="settings-description">Control how Nexus uses your preferences and conversation context.</p>
+                    <div class="settings-preferences">
+                        <label class="settings-toggle"><span><strong>Use conversation context</strong><small>Include earlier messages from the current chat.</small></span><input type="checkbox" checked data-setting-key="useConversationContext"></label>
+                        <label class="settings-toggle"><span><strong>Use project context</strong><small>Include files and instructions from the active project.</small></span><input type="checkbox" checked data-setting-key="useProjectContext"></label>
+                        <label class="settings-toggle"><span><strong>Remember preferences</strong><small>Keep interface and response preferences in this browser.</small></span><input type="checkbox" checked data-setting-key="rememberPreferences"></label>
+                    </div>
+                </section>
+                <section class="settings-panel-section" data-settings-panel="voice">
+                    <h2>Voice</h2><p class="settings-description">Dictation uses browser Speech Recognition. Read-aloud uses browser Speech Synthesis and does not send audio to a server.</p>
+                    <div class="settings-preferences">
+                        <div class="settings-preference"><span><strong>Dictation</strong><small>${("SpeechRecognition" in window || "webkitSpeechRecognition" in window) ? "Available in this browser." : "Not available in this browser."}</small></span><button type="button" class="capability-action-button" data-settings-action="voice">Test</button></div>
+                        <label class="settings-toggle"><span><strong>Read answers aloud</strong><small>Show a read-aloud action on assistant messages.</small></span><input type="checkbox" checked data-setting-key="readAloud"></label>
+                    </div>
+                    <button type="button" class="modal-button primary" data-settings-action="voice">Test read aloud</button>
+                </section>
+                <section class="settings-panel-section" data-settings-panel="models">
+                    <h2>Models</h2><p class="settings-description">Choose model defaults and inspect provider availability. Automatic routing selects the best configured model for each task.</p>
+                    <div class="settings-preferences">
+                        <label class="settings-toggle"><span><strong>Advanced Mode</strong><small>Use bounded execution controls for new messages.</small></span><input id="advancedModeEnabled" type="checkbox"></label>
+                        <div class="settings-preference"><label for="advancedTemperature"><strong>Temperature</strong><small>0 to 2. Lower values are more consistent.</small></label><input id="advancedTemperature" class="settings-select" type="number" min="0" max="2" step="0.1"></div>
+                        <div class="settings-preference"><label for="advancedMaxTokens"><strong>Output budget</strong><small>64 to 32,768 tokens.</small></label><input id="advancedMaxTokens" class="settings-select" type="number" min="64" max="32768" step="64"></div>
+                        <div class="settings-preference"><label for="advancedMaxSteps"><strong>Agent steps</strong><small>Bounded by the Nexus runtime limit.</small></label><input id="advancedMaxSteps" class="settings-select" type="number" min="1" max="12" step="1"></div>
+                    </div>
+                </section>
+                <section class="settings-panel-section" data-settings-panel="integrations">
+                    <h2>Integrations</h2><p class="settings-description">Manage connected services. A connector is only usable after authentication and transport health checks succeed.</p>
+                </section>
+                <section class="settings-panel-section" data-settings-panel="data">
+                    <h2>Data controls</h2><p class="settings-description">Nexus currently stores conversations and workspace files locally. These controls do not affect external services.</p>
+                    <div class="settings-preferences">
+                        <div class="settings-preference"><span><strong>Local storage</strong><small>Conversations, preferences, and workspace metadata remain on this installation.</small></span><strong class="capability-ready">Local</strong></div>
+                        <div class="settings-preference"><span><strong>Export and deletion</strong><small>Use the workspace and chat actions to export or delete individual records.</small></span><button type="button" class="capability-action-button" data-settings-action="data">Review</button></div>
+                    </div>
+                </section>
+                <section class="settings-panel-section" data-settings-panel="security">
+                    <h2>Security</h2><p class="settings-description">Review the controls that protect tools, files, credentials, and automated actions.</p>
+                    <div class="settings-preferences">
+                        <div class="settings-preference"><span><strong>Approval gates</strong><small>Risky actions require explicit approval before execution.</small></span><strong class="capability-ready">Enabled</strong></div>
+                        <div class="settings-preference"><span><strong>Workspace sandbox</strong><small>File operations are restricted to the configured workspace.</small></span><strong class="capability-ready">Enabled</strong></div>
+                    </div>
+                </section>
+                <div class="settings-capabilities">
+                <div class="capability-summary" data-settings-detail="models">
+                    <div>
+                        <span class="capability-label">Active runtime</span>
+                        <strong>${escapeHtml(active.type || "unknown")} /
+                            ${escapeHtml(active.model || "unknown")}</strong>
+                    </div>
+                    <div>
+                        <span class="capability-label">Nexus version</span>
+                        <strong>${escapeHtml(
+                            data.product?.version || "unknown"
+                        )}</strong>
+                    </div>
+                </div>
+
+                <section class="capability-section" data-settings-detail="models">
+                    <div class="capability-section-title">Providers</div>
+                    <div class="capability-grid">${providerCards}</div>
+                </section>
+
+                <section class="capability-section" data-settings-detail="models">
+                    <div class="capability-section-title">Model roles</div>
+                    <div class="capability-list">${roleRows}</div>
+                </section>
+
+                <section class="capability-section" data-settings-detail="models">
+                    <div class="capability-section-title">Model catalog</div>
+                    <div class="capability-list capability-scroll">${modelCatalogRows}</div>
+                </section>
+
+                <section class="capability-section" data-settings-detail="models">
+                    <div class="capability-section-title">Routing health</div>
+                    <div class="capability-list capability-scroll">${modelHealthRows}</div>
+                </section>
+
+                <section class="capability-section" data-settings-detail="models">
+                    <div class="capability-section-title">Local models</div>
+                    <div class="settings-preference">
+                        <label for="localModelName"><strong>Install with Ollama</strong><small>Downloads the named model to this machine.</small></label>
+                        <span class="capability-row-actions"><input id="localModelName" class="settings-select" placeholder="qwen2.5:7b" autocomplete="off"><button type="button" class="capability-action-button" data-install-local-model>Install</button></span>
+                    </div>
+                    <div class="capability-list capability-scroll">${localModelRows}</div>
+                </section>
+
+                <section class="capability-section" data-settings-detail="data">
+                    <div class="capability-section-title">
+                        Automations (${automations.length})
+                    </div>
+                    <div class="capability-list capability-scroll">${automationRows}</div>
+                </section>
+
+                <section class="capability-section" data-settings-detail="security">
+                    <div class="capability-section-title">
+                        Agents (${agents.length})
+                    </div>
+                    <div class="capability-list capability-scroll">${agentRows}</div>
+                </section>
+
+                <section class="capability-section" data-settings-detail="security">
+                    <div class="capability-section-title">
+                        Tools (${tools.length})
+                    </div>
+                    <div class="capability-list capability-scroll">${toolRows}</div>
+                </section>
+
+                <section class="capability-section" data-settings-detail="integrations">
+                    <div class="capability-section-title">
+                        Integrations (${integrations.length})
+                    </div>
+                    <div class="capability-list capability-scroll">${integrationRows}</div>
+                </section>
+
+                <section class="capability-section" data-settings-detail="general">
+                    <div class="capability-section-title">Features</div>
+                    <div class="feature-chips">${featureRows}</div>
+                    <div class="capability-card-meta">
+                        Granted permissions:
+                        ${escapeHtml(
+                            (permissions.granted || []).join(", ") || "None"
+                        )}
+                    </div>
+                </section>
+                </div>
+                    </div>
+                </div>
+            `;
+
+            const settingsStorageKey = "nexus-settings";
+            let savedSettings = {};
+            try {
+                savedSettings = JSON.parse(localStorage.getItem(settingsStorageKey) || "{}");
+            } catch {
+                savedSettings = {};
+            }
+            controlCenterBody.querySelectorAll("[data-setting-key]").forEach(input => {
+                const key = input.dataset.settingKey;
+                if (Object.prototype.hasOwnProperty.call(savedSettings, key)) {
+                    if (input.type === "checkbox") input.checked = Boolean(savedSettings[key]);
+                    else input.value = savedSettings[key];
+                }
+                input.addEventListener("change", () => {
+                    savedSettings[key] = input.type === "checkbox" ? input.checked : input.value;
+                    localStorage.setItem(settingsStorageKey, JSON.stringify(savedSettings));
+                    if (key === "intelligence") {
+                        localStorage.setItem("nexus-intelligence", input.value);
+                    }
+                });
+            });
+
+            controlCenterBody
+                .querySelectorAll("[data-settings-detail]")
+                .forEach(detail => {
+                    detail.hidden = !detail.dataset.settingsDetail.split(",").includes("general");
+                });
+
+            controlCenterBody
+                .querySelectorAll("[data-settings-section]")
+                .forEach(button => {
+                    button.addEventListener("click", () => {
+                        const section = button.dataset.settingsSection;
+                        controlCenterBody
+                            .querySelectorAll("[data-settings-section]")
+                            .forEach(item => item.classList.toggle("active", item === button));
+                        controlCenterBody
+                            .querySelectorAll("[data-settings-panel]")
+                            .forEach(panel => panel.classList.toggle("active", panel.dataset.settingsPanel === section));
+                        controlCenterBody
+                            .querySelectorAll("[data-settings-detail]")
+                            .forEach(detail => {
+                                const domains = detail.dataset.settingsDetail.split(",");
+                                detail.hidden = !domains.includes(section);
+                            });
+                    });
+                });
+
+            controlCenterBody
+                .querySelectorAll("[data-settings-action]")
+                .forEach(button => {
+                    button.addEventListener("click", () => {
+                        showCapabilityNotice(
+                            `${button.dataset.settingsAction} settings are available in this local-first build.`
+                        );
+                    });
+                });
+
+            controlCenterBody
+                .querySelectorAll("[data-run-automation]")
+                .forEach(button => {
+                    button.addEventListener("click", async () => {
+                        const name =
+                            button.getAttribute(
+                                "data-run-automation"
+                            );
+
+                        button.disabled = true;
+                        button.textContent = "Running...";
+
+                        try {
+                            const response = await apiRequest(
+                                `/api/automations/${encodeURIComponent(name)}/run`,
+                                {
+                                    method: "POST",
+                                    headers: {
+                                        "Content-Type": "application/json"
+                                    },
+                                    body: JSON.stringify({
+                                        input: {},
+                                        trigger: "manual"
+                                    })
+                                }
+                            );
+
+                            const result = await response.json();
+                            button.textContent =
+                                result.approvalRequired
+                                    ? "Approval needed"
+                                    : "Started";
+                        } catch (error) {
+                            button.disabled = false;
+                            button.textContent = "Retry";
+                            console.error(
+                                "Automation run failed:",
+                                error
+                            );
+                        }
+                    });
+                });
+
+            controlCenterBody.querySelectorAll("[data-install-local-model]").forEach(button => {
+                button.addEventListener("click", async () => {
+                    const input = controlCenterBody.querySelector("#localModelName");
+                    const model = input?.value.trim();
+                    if (!model) return showCapabilityNotice("Enter an Ollama model name to install.");
+                    button.disabled = true;
+                    button.textContent = "Installing...";
+                    try {
+                        const response = await apiRequest("/api/local-models/pull", {
+                            method: "POST", headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ model })
+                        });
+                        if (!response.ok) throw new Error(await getResponseError(response));
+                        showCapabilityNotice(`${model} is installed locally.`);
+                        loadCapabilities();
+                    } catch (error) {
+                        button.disabled = false;
+                        button.textContent = "Install";
+                        showCapabilityNotice(error.message);
+                    }
+                });
+            });
+
+            const advancedFields = {
+                enabled: controlCenterBody.querySelector("#advancedModeEnabled"),
+                temperature: controlCenterBody.querySelector("#advancedTemperature"),
+                maxTokens: controlCenterBody.querySelector("#advancedMaxTokens"),
+                maxAgentSteps: controlCenterBody.querySelector("#advancedMaxSteps")
+            };
+            if (advancedFields.enabled) {
+                advancedFields.enabled.checked = Boolean(advancedExecutionConfig.enabled);
+                ["temperature", "maxTokens", "maxAgentSteps"].forEach(key => {
+                    if (advancedExecutionConfig[key] != null) advancedFields[key].value = advancedExecutionConfig[key];
+                });
+                Object.entries(advancedFields).forEach(([key, input]) => input.addEventListener("change", () => {
+                    advancedExecutionConfig[key] = key === "enabled" ? input.checked : input.value;
+                    localStorage.setItem("nexus-advanced-execution", JSON.stringify(advancedExecutionConfig));
+                }));
+            }
+
+            controlCenterBody.querySelectorAll("[data-remove-local-model]").forEach(button => {
+                button.addEventListener("click", async () => {
+                    const model = button.dataset.removeLocalModel;
+                    if (!window.confirm(`Remove local model ${model}? This frees its downloaded files.`)) return;
+                    button.disabled = true;
+                    try {
+                        const response = await apiRequest("/api/local-models/delete", {
+                            method: "POST", headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ model, confirm: true })
+                        });
+                        if (!response.ok) throw new Error(await getResponseError(response));
+                        showCapabilityNotice(`${model} was removed.`);
+                        loadCapabilities();
+                    } catch (error) {
+                        button.disabled = false;
+                        showCapabilityNotice(error.message);
+                    }
+                });
+            });
+        }
+
+        modelSelector.addEventListener(
+            "change",
+            () => {
+                const role = modelSelector.value;
+                localStorage.setItem("nexus-model-role", role);
+                if (role === "auto") {
+                    selectedModelConfig = { provider: null, model: null };
+            } else if (role.startsWith("model:")) {
+                const [, provider, ...modelParts] = role.split(":");
+                selectedModelConfig = {
+                    provider,
+                    model: modelParts.join(":")
+                };
+            } else {
+                const selectedRole = roles.find(item => item.role === role);
+                selectedModelConfig = selectedRole
+                    ? { provider: selectedRole.provider, model: selectedRole.model }
+                    : { provider: null, model: null };
+            }
+            loadCapabilities();
+        }
+        );
+
+        function escapeHtml(value) {
+            return String(value ?? "")
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+
+function showAttachmentMenu() {
+    document
+        .querySelector(".attachment-menu")
+        ?.remove();
+
+    const menu = document.createElement("div");
+    menu.className = "attachment-menu";
+    menu.innerHTML = `
+        <button type="button" data-attachment-action="local">
+            <span>▧</span> Upload from this device
+        </button>
+        <button type="button" data-attachment-action="drive">
+            <span>◫</span> Add from Drive
+        </button>
+        <button type="button" data-attachment-action="github">
+            <span>⌘</span> Add GitHub repository
+        </button>
+    `;
+
+    attachmentButton.parentElement.appendChild(menu);
+
+    menu.querySelectorAll("[data-attachment-action]")
+        .forEach(action => {
+            action.addEventListener("click", () => {
+                const type =
+                    action.getAttribute(
+                        "data-attachment-action"
+                    );
+
+                menu.remove();
+
+                if (type === "local") {
+                    attachmentInput.click();
+                    return;
+                }
+
+                if (type === "drive") {
+                    showCapabilityNotice(
+                        "Drive connector is available in Integrations. Connect it from Settings before selecting files."
+                    );
+                    return;
+                }
+
+                showCapabilityNotice(
+                    "GitHub repository import requires a connected GitHub integration. Open Settings to connect it."
+                );
+            });
+        });
+}
+
+function readFileForUpload(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+
+        reader.onload = () => {
+            const result = String(reader.result || "");
+            const comma = result.indexOf(",");
+
+            resolve({
+                name: file.name,
+                content:
+                    comma === -1
+                        ? result
+                        : result.slice(comma + 1),
+                encoding: "base64"
+            });
+        };
+
+        reader.onerror = () => {
+            reject(
+                new Error(`Could not read ${file.name}.`)
+            );
+        };
+
+        reader.readAsDataURL(file);
+    });
+}
+
+function showCapabilityNotice(message) {
+    const notice = document.createElement("div");
+    notice.className = "composer-notice";
+    notice.textContent = message;
+    document.body.appendChild(notice);
+
+    setTimeout(() => notice.remove(), 5000);
+}
+
+function toggleDictation() {
+    const Recognition =
+        window.SpeechRecognition ||
+        window.webkitSpeechRecognition;
+
+    if (!Recognition) {
+        showCapabilityNotice(
+            "Dictation is not supported by this browser."
+        );
+        return;
+    }
+
+    if (speechRecognition) {
+        speechRecognition.stop();
+        speechRecognition = null;
+        voiceButton.classList.remove("active");
+        voiceButton.textContent = "◉";
+        return;
+    }
+
+    speechRecognition = new Recognition();
+    voiceChatMode = true;
+    speechRecognition.continuous = false;
+    speechRecognition.interimResults = false;
+    speechRecognition.lang =
+        navigator.language || "en-US";
+
+    speechRecognition.onresult = event => {
+        const transcript = Array.from(event.results)
+            .slice(event.resultIndex)
+            .filter(result => result.isFinal)
+            .map(result => result[0].transcript)
+            .join(" ")
+            .trim();
+
+        if (transcript) {
+            messageInput.value = transcript;
+            autoResizeTextarea();
+            if (voiceChatMode && !isSending) {
+                sendMessage();
+            }
+        }
+    };
+
+    speechRecognition.onerror = () => {
+        showCapabilityNotice(
+            "Microphone access was not available."
+        );
+        speechRecognition = null;
+        voiceChatMode = false;
+        voiceButton.classList.remove("active");
+        voiceButton.textContent = "◉";
+    };
+
+    speechRecognition.onend = () => {
+        speechRecognition = null;
+        voiceChatMode = false;
+        voiceButton.classList.remove("active");
+        voiceButton.textContent = "◉";
+    };
+
+    speechRecognition.start();
+    voiceButton.classList.add("active");
+    voiceButton.textContent = "■";
+}
+
+
+/* =========================================================
+   API
+========================================================= */
+
+async function apiRequest(
+    url,
+    options = {}
+) {
+
+    const response =
+        await fetch(
+            API_BASE + url,
+            options
+        );
+
+
+    if (!response.ok) {
+
+        let message =
+            `Request failed (${response.status})`;
+
+
+        try {
+
+            const data =
+                await response.json();
+
+
+            if (data.error) {
+                message = data.error;
+            }
+
+        } catch (_) {}
+
+
+        throw new Error(message);
+
+    }
+
+
+    return response;
+
+}
+
+
+/* =========================================================
+   LOAD CHATS
+========================================================= */
+
+async function loadChats() {
+
+    try {
+
+        const response =
+            await apiRequest(
+                "/api/chats"
+            );
+
+
+        const data =
+            await response.json();
+
+
+        conversations =
+            Array.isArray(data)
+                ? data
+                : (data.chats || []);
+
+
+        activeConversationId = null;
+
+        chatTitle.textContent =
+            "Nexus AI";
+
+
+        renderConversations();
+
+        showWelcome();
+
+
+    } catch (error) {
+
+        console.error(error);
+
+        showToast(
+            "Unable to load chats.",
+            "error"
+        );
+
+    }
+
+}
+
+
+/* =========================================================
+   CHAT LIST
+========================================================= */
+
+function renderConversations(
+    filter = ""
+) {
+
+    conversationList.innerHTML = "";
+
+
+    let filtered =
+        conversations.slice();
+
+
+    if (filter) {
+
+        const search =
+            filter.toLowerCase();
+
+
+        filtered =
+            filtered.filter(
+                chat =>
+                    String(
+                        chat.title || ""
+                    )
+                    .toLowerCase()
+                    .includes(search)
+            );
+
+    }
+
+
+    if (!filtered.length) {
+
+        conversationList.innerHTML = `
+            <div class="conversation-empty">
+                No chats found.
+            </div>
+        `;
+
+        return;
+
+    }
+
+
+    filtered.forEach(
+        chat => {
+
+            const item =
+                document.createElement(
+                    "div"
+                );
+
+
+            item.className =
+                "conversation-item" +
+                (
+                    Number(chat.id) ===
+                    Number(activeConversationId)
+                        ? " active"
+                        : ""
+                );
+
+
+            const content =
+                document.createElement(
+                    "div"
+                );
+
+
+            content.className =
+                "conversation-content";
+
+            content.textContent =
+                chat.title ||
+                "New Chat";
+
+
+            const actions =
+                document.createElement(
+                    "div"
+                );
+
+            actions.className =
+                "conversation-actions";
+
+
+            const pinButton =
+                createConversationAction(
+                    Number(chat.pinned) === 1
+                        ? "★"
+                        : "☆",
+                    Number(chat.pinned) === 1
+                        ? "Unpin chat"
+                        : "Pin chat"
+                );
+
+
+            pinButton.addEventListener(
+                "click",
+                async event => {
+
+                    event.stopPropagation();
+
+                    await togglePin(chat);
+
+                }
+            );
+
+
+            const renameButton =
+                createConversationAction(
+                    "✎",
+                    "Rename chat"
+                );
+
+
+            renameButton.addEventListener(
+                "click",
+                event => {
+
+                    event.stopPropagation();
+
+                    openRenameModal(chat);
+
+                }
+            );
+
+
+            const deleteButton =
+                createConversationAction(
+                    "×",
+                    "Delete chat",
+                    true
+                );
+
+
+            deleteButton.addEventListener(
+                "click",
+                async event => {
+
+                    event.stopPropagation();
+
+                    await deleteChat(chat);
+
+                }
+            );
+
+
+            actions.appendChild(pinButton);
+            actions.appendChild(renameButton);
+            actions.appendChild(deleteButton);
+
+
+            item.appendChild(content);
+            item.appendChild(actions);
+
+
+            item.addEventListener(
+                "click",
+                async () => {
+
+                    if (isSending) {
+                        stopGeneration();
+                    }
+
+                    await selectChat(
+                        chat.id,
+                        true
+                    );
+
+                }
+            );
+
+
+            conversationList.appendChild(
+                item
+            );
+
+        }
+    );
+
+}
+
+
+function createConversationAction(
+    text,
+    title,
+    isDelete = false
+) {
+
+    const button =
+        document.createElement(
+            "button"
+        );
+
+    button.type = "button";
+
+    button.className =
+        "conversation-action" +
+        (isDelete ? " delete" : "");
+
+    button.title = title;
+
+    button.textContent = text;
+
+    return button;
+
+}
+
+
+/* =========================================================
+   CREATE CHAT
+========================================================= */
+
+async function createNewChat() {
+
+    try {
+
+        const response =
+            await apiRequest(
+                "/api/chats",
+                {
+                    method: "POST",
+
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body:
+                        JSON.stringify({
+                            title:
+                                "New Chat"
+                        })
+
+                }
+            );
+
+
+        const data =
+            await response.json();
+
+
+        const chat =
+            data.chat || data;
+
+
+        if (!chat || !chat.id) {
+            throw new Error(
+                "Invalid chat response."
+            );
+        }
+
+
+        conversations =
+            conversations.filter(
+                item =>
+                    Number(item.id) !==
+                    Number(chat.id)
+            );
+
+
+        conversations.unshift(chat);
+
+
+        activeConversationId =
+            chat.id;
+        activeProjectId = data.project?.chatId
+            ? String(data.project.chatId)
+            : null;
+
+
+        chatTitle.textContent =
+            chat.title ||
+            "New Chat";
+
+
+        renderConversations();
+
+        showWelcome();
+
+        resetWorkspaceActivity();
+
+        messageInput.value = "";
+
+        autoResizeTextarea();
+
+        messageInput.focus();
+
+
+        return chat;
+
+
+    } catch (error) {
+
+        console.error(error);
+
+        showToast(
+            error.message ||
+            "Unable to create chat.",
+            "error"
+        );
+
+        return null;
+
+    }
+
+}
+
+
+/* =========================================================
+   SELECT CHAT
+========================================================= */
+
+async function selectChat(
+    chatId,
+    shouldFocus = true
+) {
+
+    try {
+
+        const response =
+            await apiRequest(
+                `/api/chats/${chatId}`
+            );
+
+
+        const data =
+            await response.json();
+
+
+        const chat =
+            data.chat || data;
+
+
+        activeConversationId =
+            chat.id;
+
+
+        chatTitle.textContent =
+            chat.title ||
+            "New Chat";
+
+
+        renderConversations(
+            searchInput.value.trim()
+        );
+
+
+        renderMessages(
+            data.messages || []
+        );
+
+
+        resetWorkspaceActivity();
+
+        await refreshWorkspace();
+
+
+        if (shouldFocus) {
+            messageInput.focus();
+        }
+
+
+    } catch (error) {
+
+        console.error(error);
+
+        showToast(
+            "Unable to open chat.",
+            "error"
+        );
+
+    }
+
+}
+
+
+/* =========================================================
+   MESSAGES
+========================================================= */
+
+function renderMessages(
+    chatMessages
+) {
+
+    messages.innerHTML = "";
+
+
+    if (
+        !chatMessages ||
+        !chatMessages.length
+    ) {
+
+        showWelcome();
+
+        return;
+
+    }
+
+
+    let latestAssistantIndex = -1;
+
+
+    for (
+        let i =
+            chatMessages.length - 1;
+        i >= 0;
+        i--
+    ) {
+
+        if (
+            chatMessages[i].role ===
+            "assistant"
+        ) {
+
+            latestAssistantIndex = i;
+
+            break;
+
+        }
+
+    }
+
+
+    chatMessages.forEach(
+        (message, index) => {
+
+            const contentElement =
+                appendMessage(
+                    message.role,
+                    message.content
+                );
+
+
+            if (
+                message.role === "assistant" &&
+                index === latestAssistantIndex
+            ) {
+
+                addRegenerateButton(
+                    contentElement
+                );
+
+            }
+
+        }
+    );
+
+
+    scrollMessagesToBottom(false);
+
+}
+
+
+function showWelcome() {
+
+    messages.innerHTML = `
+
+        <div class="welcome-message">
+
+            <div class="welcome-icon">
+                N
+            </div>
+
+            <h1>
+                How can I help you?
+            </h1>
+
+            <p>
+                Ask Nexus to create, modify, analyze, or work on your project.
+            </p>
+
+        </div>
+
+    `;
+
+}
+
+
+function appendMessage(
+    role,
+    content,
+    messageId = null
+) {
+
+    const welcome =
+        messages.querySelector(
+            ".welcome-message"
+        );
+
+
+    if (welcome) {
+        welcome.remove();
+    }
+
+
+    if (role === "assistant") {
+        removeRegenerateButtons();
+    }
+
+
+    const message =
+        document.createElement(
+            "div"
+        );
+
+
+    message.className =
+        `message ${role}`;
+    if (messageId != null) message.dataset.messageId = String(messageId);
+
+
+    const inner =
+        document.createElement(
+            "div"
+        );
+
+
+    inner.className =
+        "message-inner";
+
+
+    const avatar =
+        document.createElement(
+            "div"
+        );
+
+
+    avatar.className =
+        "message-avatar";
+
+
+    avatar.textContent =
+        role === "user"
+            ? "You"
+            : "N";
+
+
+    const body =
+        document.createElement(
+            "div"
+        );
+
+
+    body.className =
+        "message-body";
+
+
+    const sender =
+        document.createElement(
+            "div"
+        );
+
+
+    sender.className =
+        "message-sender";
+
+
+    sender.textContent =
+        role === "user"
+            ? "You"
+            : "Nexus AI";
+
+
+    const contentElement =
+        document.createElement(
+            "div"
+        );
+
+
+    contentElement.className =
+        "message-content";
+
+
+    contentElement.innerHTML =
+        formatMessage(
+            content || ""
+        );
+
+
+    body.appendChild(sender);
+    body.appendChild(contentElement);
+
+    if (role === "assistant") {
+        const audioButton = document.createElement("button");
+        audioButton.type = "button";
+        audioButton.className = "message-action-button";
+        audioButton.textContent = "Read aloud";
+        audioButton.addEventListener("click", () => {
+            if (!("speechSynthesis" in window)) {
+                showCapabilityNotice("Read aloud is not supported by this browser.");
+                return;
+            }
+            window.speechSynthesis.cancel();
+            const utterance = new SpeechSynthesisUtterance(
+                contentElement.textContent
+            );
+            window.speechSynthesis.speak(utterance);
+        });
+        body.appendChild(audioButton);
+    }
+
+    if (messageId != null) {
+        const branchButton = document.createElement("button");
+        branchButton.type = "button";
+        branchButton.className = "message-action-button";
+        branchButton.textContent = "Branch";
+        branchButton.addEventListener("click", () => branchConversation(messageId));
+        body.appendChild(branchButton);
+    }
+
+    inner.appendChild(avatar);
+    inner.appendChild(body);
+
+    message.appendChild(inner);
+
+    messages.appendChild(message);
+
+
+    attachCopyHandlers(
+        contentElement
+    );
+
+
+    return contentElement;
+
+}
+
+
+/* =========================================================
+   REGENERATE
+========================================================= */
+
+function removeRegenerateButtons() {
+
+    document
+        .querySelectorAll(
+            "[data-action='regenerate-response']"
+        )
+        .forEach(
+            button => {
+
+                const actions =
+                    button.closest(
+                        ".message-actions"
+                    );
+
+                if (actions) {
+                    actions.remove();
+                } else {
+                    button.remove();
+                }
+
+            }
+        );
+
+}
+
+
+function addRegenerateButton(
+    contentElement
+) {
+
+    if (
+        !contentElement ||
+        isSending
+    ) {
+        return;
+    }
+
+
+    const message =
+        contentElement.closest(
+            ".message.assistant"
+        );
+
+
+    if (!message) {
+        return;
+    }
+
+
+    removeRegenerateButtons();
+
+
+    const actions =
+        document.createElement(
+            "div"
+        );
+
+
+    actions.className =
+        "message-actions";
+
+
+    const button =
+        document.createElement(
+            "button"
+        );
+
+
+    button.type = "button";
+
+    button.className =
+        "message-action-button";
+
+    button.dataset.action =
+        "regenerate-response";
+
+    button.textContent =
+        "↻ Regenerate";
+
+
+    actions.appendChild(button);
+
+
+    const body =
+        message.querySelector(
+            ".message-body"
+        );
+
+
+    if (body) {
+        body.appendChild(actions);
+    }
+
+}
+
+
+async function regenerateLastResponse() {
+
+    if (
+        isSending ||
+        !activeConversationId
+    ) {
+        return;
+    }
+
+
+    const assistantMessages =
+        messages.querySelectorAll(
+            ".message.assistant"
+        );
+
+
+    if (!assistantMessages.length) {
+        return;
+    }
+
+
+    assistantMessages[
+        assistantMessages.length - 1
+    ].remove();
+
+
+    removeRegenerateButtons();
+
+
+    isSending = true;
+
+    activeAbortController =
+        new AbortController();
+
+
+    setSendingState(true);
+
+    startAgentActivity(
+        "regenerate",
+        "Regenerating response..."
+    );
+
+    showThinking();
+
+
+    try {
+
+        const response =
+            await fetch(
+                `/api/chats/${activeConversationId}/regenerate`,
+                {
+                    method: "POST",
+
+                    headers: {
+                        "Content-Type":
+                            "application/json",
+
+                        "Accept":
+                            "application/x-ndjson, application/json"
+                    },
+
+                    body:
+                        JSON.stringify({
+                            stream: true
+                        }),
+
+                    signal:
+                        activeAbortController.signal
+                }
+            );
+
+
+        if (!response.ok) {
+            throw new Error(
+                await getResponseError(response)
+            );
+        }
+
+
+        removeThinking();
+
+
+        if (
+            (
+                response.headers.get(
+                    "content-type"
+                ) || ""
+            )
+            .includes(
+                "application/x-ndjson"
+            )
+        ) {
+
+            await handleStreamingResponse(
+                response
+            );
+
+        } else {
+
+            const data =
+                await response.json();
+
+
+            const element =
+                appendMessage(
+                    "assistant",
+                    data.answer || ""
+                );
+
+
+            addRegenerateButton(
+                element
+            );
+
+        }
+
+
+        await refreshChatsAfterMessage();
+
+        completeAgentActivity();
+
+
+    } catch (error) {
+
+        removeThinking();
+
+        if (
+            error.name !== "AbortError"
+        ) {
+
+            appendMessage(
+                "assistant",
+                `Error: ${escapeHtml(
+                    error.message
+                )}`
+            );
+
+            showToast(
+                error.message,
+                "error"
+            );
+
+        }
+
+    } finally {
+
+        isSending = false;
+
+        activeAbortController = null;
+        activeAssistantElement = null;
+
+        setSendingState(false);
+
+        messageInput.focus();
+
+    }
+
+}
+
+
+/* =========================================================
+   SEND
+========================================================= */
+
+async function sendMessage() {
+
+    if (isSending) {
+        return;
+    }
+
+    function inferTask(text) {
+        const value = String(text || "").toLowerCase();
+
+        if (
+            webSearchMode ||
+            /\b(search|browse|latest|current|today|news|research|source|citation)\b/.test(value)
+        ) {
+            return "research";
+        }
+
+        if (
+            /\b(code|coding|debug|bug|function|javascript|python|sql|api|developer)\b/.test(value)
+        ) {
+            return "code";
+        }
+
+        if (
+            /\b(plan|roadmap|steps|strategy|compare|decide|reason|analy[sz]e)\b/.test(value) ||
+            thinkMode
+        ) {
+            return "planner";
+        }
+
+        if (
+            /\b(image|picture|illustration|logo|visual|photo)\b/.test(value)
+        ) {
+            return "image";
+        }
+
+        return "chat";
+    }
+
+
+    const text =
+        messageInput.value.trim();
+
+
+    if (!text) {
+        return;
+    }
+
+
+    if (!activeConversationId) {
+
+        const chat =
+            await createNewChat();
+
+
+        if (!chat) {
+            return;
+        }
+
+    }
+
+
+    isSending = true;
+
+    activeAbortController =
+        new AbortController();
+
+
+    removeRegenerateButtons();
+
+
+    appendMessage(
+        "user",
+        text
+    );
+
+
+    messageInput.value = "";
+
+    autoResizeTextarea();
+
+    setSendingState(true);
+
+    showThinking();
+
+    scrollMessagesToBottom();
+
+
+    resetWorkspaceActivity();
+
+
+    addActivity(
+        "understanding",
+        "Understanding your request...",
+        "active"
+    );
+
+
+    try {
+
+        const response =
+            await fetch(
+                `${API_BASE}/api/chat`,
+                {
+                    method: "POST",
+
+                    headers: {
+                        "Content-Type":
+                            "application/json",
+
+                        "Accept":
+                            "application/x-ndjson, application/json"
+                    },
+
+                    body:
+                        JSON.stringify({
+                            chatId:
+                                activeConversationId,
+
+                            message:
+                                text,
+
+                            provider:
+                                selectedModelConfig.provider,
+
+                            model:
+                                selectedModelConfig.model,
+
+                            intelligence:
+                                thinkMode
+                                    ? "high"
+                                    : intelligenceSelector.value,
+                            task:
+                                inferTask(text),
+                            webSearch:
+                                webSearchMode,
+
+                            ...advancedRequestOptions(),
+
+                            stream:
+                                true
+                        }),
+
+                    signal:
+                        activeAbortController.signal
+                }
+            );
+
+
+        if (!response.ok) {
+
+            throw new Error(
+                await getResponseError(response)
+            );
+
+        }
+
+
+        removeThinking();
+
+
+        const contentType =
+            response.headers.get(
+                "content-type"
+            ) || "";
+
+
+        if (
+            contentType.includes(
+                "application/x-ndjson"
+            )
+        ) {
+
+            await handleStreamingResponse(
+                response
+            );
+
+        } else {
+
+            const data =
+                await response.json();
+
+
+            if (data.error) {
+                throw new Error(
+                    data.error
+                );
+            }
+
+
+            const element =
+                appendMessage(
+                    "assistant",
+                    data.answer || ""
+                );
+
+
+            addRegenerateButton(
+                element
+            );
+
+
+            processAgentPayload(
+                data
+            );
+
+        }
+
+
+        await refreshChatsAfterMessage();
+
+        await refreshWorkspace();
+
+        completeAgentActivity();
+
+        if (voiceChatMode && activeAssistantElement?.textContent?.trim()) {
+            speakText(activeAssistantElement.textContent);
+        }
+
+
+    } catch (error) {
+
+        removeThinking();
+
+
+        if (
+            error.name === "AbortError"
+        ) {
+
+            if (
+                activeAssistantElement &&
+                activeAssistantElement.textContent.trim()
+            ) {
+
+                addRegenerateButton(
+                    activeAssistantElement
+                );
+
+            }
+
+            function speakText(text) {
+                if (!("speechSynthesis" in window) || !text) return;
+                window.speechSynthesis.cancel();
+                window.speechSynthesis.speak(new SpeechSynthesisUtterance(text));
+            }
+
+        } else {
+
+            console.error(
+                "Send error:",
+                error
+            );
+
+
+            appendMessage(
+                "assistant",
+                `Error: ${escapeHtml(
+                    error.message ||
+                    "Something went wrong."
+                )}`
+            );
+
+
+            showToast(
+                error.message ||
+                "Unable to get a response.",
+                "error"
+            );
+
+
+            failAgentActivity(
+                error.message
+            );
+
+        }
+
+    } finally {
+
+        isSending = false;
+
+        activeAbortController = null;
+        activeAssistantElement = null;
+
+        setSendingState(false);
+
+        messageInput.focus();
+
+    }
+
+}
+
+
+/* =========================================================
+   STREAMING
+========================================================= */
+
+async function handleStreamingResponse(
+    response
+) {
+
+    if (!response.body) {
+        throw new Error(
+            "Streaming is not supported."
+        );
+    }
+
+
+    const reader =
+        response.body.getReader();
+
+
+    const decoder =
+        new TextDecoder("utf-8");
+
+
+    let buffer = "";
+    let assistantText = "";
+
+
+    removeRegenerateButtons();
+
+
+    const assistantContentElement =
+        appendMessage(
+            "assistant",
+            ""
+        );
+
+
+    activeAssistantElement =
+        assistantContentElement;
+
+
+    try {
+
+        while (true) {
+
+            const {
+                value,
+                done
+            } =
+                await reader.read();
+
+
+            if (done) {
+                break;
+            }
+
+
+            buffer +=
+                decoder.decode(
+                    value,
+                    {
+                        stream: true
+                    }
+                );
+
+
+            const lines =
+                buffer.split("\n");
+
+
+            buffer =
+                lines.pop() || "";
+
+
+            for (
+                const rawLine of lines
+            ) {
+
+                const line =
+                    rawLine.trim();
+
+
+                if (!line) {
+                    continue;
+                }
+
+
+                let data;
+
+
+                try {
+
+                    data =
+                        JSON.parse(line);
+
+                } catch (_) {
+
+                    continue;
+
+                }
+
+
+                processStreamEvent(
+                    data,
+                    text => {
+
+                        assistantText +=
+                            text;
+
+                        assistantContentElement.innerHTML =
+                            formatMessage(
+                                assistantText
+                            );
+
+                        attachCopyHandlers(
+                            assistantContentElement
+                        );
+
+                        scrollMessagesToBottom();
+
+                    }
+                );
+
+            }
+
+        }
+
+
+        buffer +=
+            decoder.decode();
+
+
+        const finalLines =
+            buffer
+                .split("\n")
+                .map(
+                    line =>
+                        line.trim()
+                )
+                .filter(Boolean);
+
+
+        for (
+            const line of finalLines
+        ) {
+
+            try {
+
+                const data =
+                    JSON.parse(line);
+
+
+                processStreamEvent(
+                    data,
+                    text => {
+
+                        assistantText +=
+                            text;
+
+                        assistantContentElement.innerHTML =
+                            formatMessage(
+                                assistantText
+                            );
+
+                        attachCopyHandlers(
+                            assistantContentElement
+                        );
+
+                    }
+                );
+
+            } catch (_) {}
+
+        }
+
+
+        if (assistantText.trim()) {
+
+            addRegenerateButton(
+                assistantContentElement
+            );
+
+        }
+
+
+    } finally {
+
+        reader.releaseLock();
+
+    }
+
+}
+
+
+function processStreamEvent(
+    data,
+    appendText
+) {
+
+    if (
+        data.type === "activity" ||
+        data.type === "agent_activity"
+    ) {
+
+        processAgentActivityEvent(
+            data
+        );
+
+        return;
+    }
+
+
+    if (
+        data.type === "chunk"
+    ) {
+
+        appendText(
+            data.content || ""
+        );
+
+        return;
+    }
+
+
+    if (
+        data.type === "done"
+    ) {
+
+        if (
+            data.answer &&
+            activeAssistantElement &&
+            !activeAssistantElement.textContent.trim()
+        ) {
+
+            activeAssistantElement.innerHTML =
+                formatMessage(
+                    data.answer
+                );
+
+        }
+
+
+        processAgentPayload(
+            data
+        );
+
+        return;
+    }
+
+
+    if (
+        data.type === "error"
+    ) {
+
+        throw new Error(
+            data.error ||
+            "Streaming error."
+        );
+
+    }
+
+}
+
+
+function processAgentPayload(
+    data
+) {
+
+    if (!data) {
+        return;
+    }
+
+
+    if (
+        Array.isArray(data.activity)
+    ) {
+
+        data.activity.forEach(
+            processAgentActivityEvent
+        );
+
+    }
+
+
+    if (data.project) {
+        renderProject(
+            data.project
+        );
+    }
+
+
+    if (
+        data.verification
+    ) {
+
+        renderVerification(
+            data.verification
+        );
+
+    }
+
+
+    if (
+        data.previewUrl
+    ) {
+
+        showPreview(
+            data.previewUrl
+        );
+
+    }
+
+
+    if (
+        Array.isArray(data.changedFiles)
+    ) {
+
+        data.changedFiles.forEach(
+            file => {
+
+                addActivity(
+                    "file",
+                    `Changed ${file}`,
+                    "completed"
+                );
+
+            }
+        );
+
+    }
+
+}
+
+
+/* =========================================================
+   AGENT ACTIVITY
+========================================================= */
+
+function resetWorkspaceActivity() {
+
+    agentActivity.innerHTML = `
+        <div class="activity-empty">
+            Nexus activity will appear here when it works on your project.
+        </div>
+    `;
+
+    activityState.textContent =
+        "Ready";
+
+    setAgentStatusClass("agent-status");
+
+}
+
+
+function startAgentActivity(
+    type,
+    message
+) {
+
+    addActivity(
+        type,
+        message,
+        "active"
+    );
+
+}
+
+
+function addActivity(
+    type,
+    message,
+    state = "completed"
+) {
+
+    const empty =
+        agentActivity.querySelector(
+            ".activity-empty"
+        );
+
+
+    if (empty) {
+        empty.remove();
+    }
+
+
+    const item =
+        document.createElement(
+            "div"
+        );
+
+
+    item.className =
+        `activity-item ${state}`;
+
+
+    const icon =
+        document.createElement(
+            "div"
+        );
+
+
+    icon.className =
+        "activity-icon";
+
+
+    icon.textContent =
+        getActivityIcon(type);
+
+
+    const text =
+        document.createElement(
+            "div"
+        );
+
+
+    text.className =
+        "activity-text";
+
+
+    text.textContent =
+        message;
+
+
+    const time =
+        document.createElement(
+            "span"
+        );
+
+
+    time.className =
+        "activity-time";
+
+
+    time.textContent =
+        new Date().toLocaleTimeString(
+            [],
+            {
+                hour: "2-digit",
+                minute: "2-digit"
+            }
+        );
+
+
+    text.appendChild(time);
+
+    item.appendChild(icon);
+    item.appendChild(text);
+
+    agentActivity.appendChild(item);
+
+
+    agentActivity.scrollTop =
+        agentActivity.scrollHeight;
+
+
+    if (state === "active") {
+
+        activityState.textContent =
+            "Working";
+
+        setAgentStatusClass("agent-status working");
+
+    }
+
+}
+
+
+function processAgentActivityEvent(
+    data
+) {
+
+    const message =
+        data.message ||
+        data.content ||
+        data.text ||
+        "Agent activity";
+
+
+    const type =
+        data.stage ||
+        data.action ||
+        data.type ||
+        "agent";
+
+
+    addActivity(
+        type,
+        message,
+        data.status === "error"
+            ? "error"
+            : data.status === "completed"
+                ? "completed"
+                : "active"
+    );
+
+}
+
+
+function completeAgentActivity() {
+
+    activityState.textContent =
+        "Completed";
+
+    setAgentStatusClass("agent-status success");
+
+}
+
+
+function failAgentActivity(
+    message
+) {
+
+    activityState.textContent =
+        "Error";
+
+    setAgentStatusClass("agent-status");
+
+    addActivity(
+        "error",
+        message ||
+        "Agent operation failed.",
+        "completed"
+    );
+
+}
+
+
+function getActivityIcon(
+    type
+) {
+
+    const value =
+        String(type)
+            .toLowerCase();
+
+
+    if (value.includes("understand")) {
+        return "◌";
+    }
+
+    if (value.includes("plan")) {
+        return "◇";
+    }
+
+    if (value.includes("inspect")) {
+        return "⌕";
+    }
+
+    if (
+        value.includes("write") ||
+        value.includes("create")
+    ) {
+        return "+";
+    }
+
+    if (
+        value.includes("file") ||
+        value.includes("update")
+    ) {
+        return "□";
+    }
+
+    if (value.includes("verify")) {
+        return "✓";
+    }
+
+    if (value.includes("preview")) {
+        return "▣";
+    }
+
+    if (value.includes("error")) {
+        return "!";
+    }
+
+    return "•";
+
+}
+
+
+/* =========================================================
+   WORKSPACE
+========================================================= */
+
+function toggleWorkspace() {
+
+    workspaceOpen =
+        !workspaceOpen;
+
+
+    workspacePanel.classList.toggle(
+        "closed",
+        !workspaceOpen
+    );
+
+    localStorage.setItem(
+        "nexus-workspace-open",
+        String(workspaceOpen)
+    );
+
+}
+
+
+async function refreshWorkspace() {
+
+    try {
+
+        const response =
+            await apiRequest(
+                "/api/workspace"
+            );
+
+
+        const data =
+            await response.json();
+
+
+        const tree =
+            data.tree ||
+            data.files ||
+            data;
+
+
+        workspaceFiles =
+            flattenWorkspaceTree(
+                tree
+            );
+
+
+        renderWorkspaceTree(
+            tree
+        );
+
+
+        fileCount.textContent =
+            workspaceFiles.length;
+
+
+        detectProject(
+            workspaceFiles
+        );
+
+
+        if (
+            workspaceFiles.some(
+                file =>
+                    file.path === "index.html"
+            )
+        ) {
+
+            showPreview(
+                getPreviewUrl()
+            );
+
+        }
+
+
+    } catch (error) {
+
+        console.warn(
+            "Workspace unavailable:",
+            error
+        );
+
+        workspaceFiles = [];
+
+        renderWorkspaceTree([]);
+
+    }
+
+}
+
+
+function flattenWorkspaceTree(
+    tree,
+    result = []
+) {
+
+    if (!Array.isArray(tree)) {
+        return result;
+    }
+
+
+    tree.forEach(
+        item => {
+
+            if (!item) {
+                return;
+            }
+
+
+            const path =
+                item.path ||
+                item.relativePath ||
+                item.name;
+
+
+            if (
+                item.type === "file" ||
+                item.kind === "file" ||
+                item.isFile === true
+            ) {
+
+                if (path) {
+                    result.push({
+                        path,
+                        type: "file",
+                        name:
+                            item.name ||
+                            path.split(/[\\/]/).pop()
+                    });
+                }
+
+            }
+
+
+            const children =
+                item.children;
+
+
+            if (
+                Array.isArray(children)
+            ) {
+
+                flattenWorkspaceTree(
+                    children,
+                    result
+                );
+
+            }
+
+        }
+    );
+
+
+    return result;
+
+}
+
+
+function renderWorkspaceTree(
+    tree
+) {
+
+    workspaceTree.innerHTML = "";
+
+
+    if (
+        !Array.isArray(tree) ||
+        !tree.length
+    ) {
+
+        workspaceTree.innerHTML = `
+            <div class="tree-empty">
+                Workspace is empty.
+            </div>
+        `;
+
+        return;
+
+    }
+
+
+    const container =
+        buildTreeElements(
+            tree
+        );
+
+
+    workspaceTree.appendChild(
+        container
+    );
+
+}
+
+
+function buildTreeElements(
+    items
+) {
+
+    const fragment =
+        document.createDocumentFragment();
+
+
+    items.forEach(
+        item => {
+
+            if (!item) {
+                return;
+            }
+
+
+            const path =
+                item.path ||
+                item.relativePath ||
+                item.name;
+
+
+            const isDirectory =
+                item.type === "directory" ||
+                item.kind === "directory" ||
+                item.isDirectory === true;
+
+
+            const row =
+                document.createElement(
+                    "div"
+                );
+
+
+            row.className =
+                `tree-item ${
+                    isDirectory
+                        ? "tree-folder"
+                        : ""
+                }`;
+
+
+            if (
+                selectedFilePath === path
+            ) {
+
+                row.classList.add(
+                    "selected"
+                );
+
+            }
+
+
+            const icon =
+                document.createElement(
+                    "span"
+                );
+
+
+            icon.className =
+                "tree-icon";
+
+
+            icon.textContent =
+                isDirectory
+                    ? "▾"
+                    : getFileIcon(path);
+
+
+            const name =
+                document.createElement(
+                    "span"
+                );
+
+
+            name.className =
+                "tree-name";
+
+
+            name.textContent =
+                item.name ||
+                path;
+
+
+            row.appendChild(icon);
+            row.appendChild(name);
+
+
+            if (!isDirectory) {
+
+                row.addEventListener(
+                    "click",
+                    async () => {
+
+                        await openWorkspaceFile(
+                            path
+                        );
+
+                    }
+                );
+
+            }
+
+
+            fragment.appendChild(row);
+
+
+            if (
+                Array.isArray(
+                    item.children
+                )
+            ) {
+
+                const children =
+                    document.createElement(
+                        "div"
+                    );
+
+
+                children.className =
+                    "tree-children";
+
+
+                children.appendChild(
+                    buildTreeElements(
+                        item.children
+                    )
+                );
+
+
+                fragment.appendChild(
+                    children
+                );
+
+            }
+
+        }
+    );
+
+
+    return fragment;
+
+}
+
+
+function getFileIcon(
+    path
+) {
+
+    const lower =
+        String(path)
+            .toLowerCase();
+
+
+    if (lower.endsWith(".html")) {
+        return "H";
+    }
+
+    if (lower.endsWith(".css")) {
+        return "#";
+    }
+
+    if (lower.endsWith(".js")) {
+        return "J";
+    }
+
+    if (lower.endsWith(".json")) {
+        return "{}";
+    }
+
+    if (lower.endsWith(".md")) {
+        return "M";
+    }
+
+    return "·";
+
+}
+
+
+/* =========================================================
+   PROJECT
+========================================================= */
+
+function detectProject(
+    files
+) {
+
+    const paths =
+        files.map(
+            file =>
+                String(
+                    file.path || ""
+                ).toLowerCase()
+        );
+
+
+    const hasHtml =
+        paths.some(
+            path =>
+                path.endsWith(".html")
+        );
+
+
+    const hasCss =
+        paths.some(
+            path =>
+                path.endsWith(".css")
+        );
+
+
+    const hasJs =
+        paths.some(
+            path =>
+                path.endsWith(".js")
+        );
+
+
+    if (!files.length) {
+
+        projectInfo.innerHTML = `
+            <div class="project-empty">
+                No project detected yet.
+            </div>
+        `;
+
+        return;
+
+    }
+
+
+    let type =
+        "Workspace Project";
+
+
+    if (
+        hasHtml &&
+        hasCss &&
+        hasJs
+    ) {
+
+        type =
+            "Web Application";
+
+    } else if (hasHtml) {
+
+        type =
+            "Website";
+
+    }
+
+
+    projectInfo.innerHTML = `
+
+        <div class="project-card">
+
+            <div class="project-name">
+                Nexus Workspace
+            </div>
+
+            <div class="project-type">
+                ${escapeHtml(type)}
+            </div>
+
+            <div class="project-meta">
+
+                <span class="project-tag">
+                    ${files.length} files
+                </span>
+
+                ${
+                    hasHtml
+                        ? `
+                            <span class="project-tag">
+                                HTML
+                            </span>
+                        `
+                        : ""
+                }
+
+                ${
+                    hasCss
+                        ? `
+                            <span class="project-tag">
+                                CSS
+                            </span>
+                        `
+                        : ""
+                }
+
+                ${
+                    hasJs
+                        ? `
+                            <span class="project-tag">
+                                JavaScript
+                            </span>
+                        `
+                        : ""
+                }
+
+            </div>
+
+        </div>
+
+    `;
+
+}
+
+
+/* =========================================================
+   FILE EDITOR
+========================================================= */
+
+async function openWorkspaceFile(
+    path
+) {
+
+    try {
+
+        const response =
+            await apiRequest(
+                `/api/workspace/file?path=${encodeURIComponent(
+                    path
+                )}`
+            );
+
+
+        const data =
+            await response.json();
+
+
+        const content =
+            data.content ??
+            data.file?.content ??
+            "";
+
+
+        selectedFilePath =
+            path;
+
+        selectedFileContent =
+            content;
+
+
+        selectedFileName.textContent =
+            path;
+
+
+        fileEditor.value =
+            content;
+
+
+        fileEditorSection.classList.remove(
+            "hidden"
+        );
+
+
+        renderWorkspaceTree(
+            await getWorkspaceTree()
+        );
+
+
+    } catch (error) {
+
+        showToast(
+            error.message ||
+            "Unable to open file.",
+            "error"
+        );
+
+    }
+
+}
+
+
+async function getWorkspaceTree() {
+
+    try {
+
+        const response =
+            await apiRequest(
+                "/api/workspace"
+            );
+
+
+        const data =
+            await response.json();
+
+
+        return (
+            data.tree ||
+            data.files ||
+            data
+        );
+
+    } catch (_) {
+
+        return [];
+
+    }
+
+}
+
+
+async function saveSelectedFile() {
+
+    if (!selectedFilePath) {
+        return;
+    }
+
+
+    const content =
+        fileEditor.value;
+
+
+    try {
+
+        await apiRequest(
+            "/api/workspace/file",
+            {
+                method: "PUT",
+
+                headers: {
+                    "Content-Type":
+                        "application/json"
+                },
+
+                body:
+                    JSON.stringify({
+                        path:
+                            selectedFilePath,
+
+                        content
+                    })
+
+            }
+        );
+
+
+        selectedFileContent =
+            content;
+
+
+        addActivity(
+            "update",
+            `Saved ${selectedFilePath}`,
+            "completed"
+        );
+
+
+        showToast(
+            "File saved."
+        );
+
+
+        await refreshWorkspace();
+
+        refreshPreview();
+
+
+    } catch (error) {
+
+        showToast(
+            error.message ||
+            "Unable to save file.",
+            "error"
+        );
+
+    }
+
+}
+
+
+function closeFileEditor() {
+
+    selectedFilePath = null;
+
+    selectedFileContent = "";
+
+    fileEditorSection.classList.add(
+        "hidden"
+    );
+
+}
+
+
+/* =========================================================
+   PREVIEW
+========================================================= */
+
+function getPreviewUrl() {
+
+    return (
+        "/api/preview/index.html"
+    );
+
+}
+
+
+function showPreview(
+    url
+) {
+
+    if (!url) {
+        return;
+    }
+
+
+    const existing =
+        previewContainer.querySelector(
+            "iframe"
+        );
+
+
+    if (existing) {
+
+        existing.src =
+            `${url}${
+                url.includes("?")
+                    ? "&"
+                    : "?"
+            }t=${Date.now()}`;
+
+        return;
+
+    }
+
+
+    previewContainer.innerHTML = "";
+
+
+    const iframe =
+        document.createElement(
+            "iframe"
+        );
+
+
+    iframe.src =
+        `${url}${
+            url.includes("?")
+                ? "&"
+                : "?"
+        }t=${Date.now()}`;
+
+
+    iframe.title =
+        "Nexus live preview";
+
+
+    iframe.loading =
+        "lazy";
+
+
+    previewContainer.appendChild(
+        iframe
+    );
+
+}
+
+
+function refreshPreview() {
+
+    const iframe =
+        previewContainer.querySelector(
+            "iframe"
+        );
+
+
+    if (iframe) {
+
+        const current =
+            iframe.src.split(
+                "?t="
+            )[0];
+
+
+        iframe.src =
+            `${current}?t=${Date.now()}`;
+
+    } else {
+
+        showPreview(
+            getPreviewUrl()
+        );
+
+    }
+
+}
+
+
+function openPreview() {
+
+    const url =
+        getPreviewUrl();
+
+
+    window.open(
+        url,
+        "_blank",
+        "noopener,noreferrer"
+    );
+
+}
+
+
+/* =========================================================
+   VERIFICATION
+========================================================= */
+
+function renderVerification(
+    result
+) {
+
+    if (!result) {
+        return;
+    }
+
+
+    const success =
+        result.success !== false &&
+        result.valid !== false;
+
+
+    const checks =
+        result.checks ||
+        result.results ||
+        [];
+
+
+    verificationPanel.innerHTML = `
+
+        <div
+            class="
+                verification-result
+                ${success ? "success" : "error"}
+            "
+        >
+
+            <div class="verification-title">
+
+                ${success
+                    ? "✓ Verification passed"
+                    : "Verification found issues"}
+
+            </div>
+
+            <div class="verification-details">
+
+                ${
+                    Array.isArray(checks)
+                        ? checks
+                            .map(
+                                check => `
+                                    <div class="verification-item">
+                                        ${
+                                            check.success === false ||
+                                            check.valid === false
+                                                ? "✗"
+                                                : "✓"
+                                        }
+                                        ${escapeHtml(
+                                            check.message ||
+                                            check.name ||
+                                            String(check)
+                                        )}
+                                    </div>
+                                `
+                            )
+                            .join("")
+                        : escapeHtml(
+                            result.message ||
+                            "Verification completed."
+                        )
+                }
+
+            </div>
+
+        </div>
+
+    `;
+
+}
+
+
+/* =========================================================
+   STOP
+========================================================= */
+
+function stopGeneration() {
+
+    if (!isSending) {
+        return;
+    }
+
+
+    if (activeAbortController) {
+        activeAbortController.abort();
+    }
+
+
+    removeThinking();
+
+}
+
+
+/* =========================================================
+   THINKING
+========================================================= */
+
+function showThinking() {
+
+    removeThinking();
+
+
+    const message =
+        document.createElement(
+            "div"
+        );
+
+
+    message.id =
+        "thinkingMessage";
+
+
+    message.className =
+        "message thinking-message";
+
+
+    message.innerHTML = `
+
+        <div class="message-inner">
+
+            <div class="message-avatar">
+                N
+            </div>
+
+            <div class="message-body">
+
+                <div class="message-sender">
+                    Nexus AI
+                </div>
+
+                <div class="thinking-indicator">
+
+                    <span></span>
+                    <span></span>
+                    <span></span>
+
+                </div>
+
+            </div>
+
+        </div>
+
+    `;
+
+
+    messages.appendChild(
+        message
+    );
+
+
+    scrollMessagesToBottom();
+
+}
+
+
+function removeThinking() {
+
+    const element =
+        document.getElementById(
+            "thinkingMessage"
+        );
+
+
+    if (element) {
+        element.remove();
+    }
+
+}
+
+
+/* =========================================================
+   SEND STATE
+========================================================= */
+
+function setSendingState(
+    sending
+) {
+
+    const text =
+        sendButton.querySelector(
+            ".send-button-text"
+        );
+
+
+    const icon =
+        sendButton.querySelector(
+            ".send-button-icon"
+        );
+
+
+    if (sending) {
+
+        sendButton.title =
+            "Stop generating";
+
+
+        if (text) {
+            text.textContent =
+                "Stop";
+        }
+
+
+        if (icon) {
+            icon.textContent =
+                "■";
+        }
+
+    } else {
+
+        sendButton.title =
+            "Send message";
+
+
+        if (text) {
+            text.textContent =
+                "Send";
+        }
+
+
+        if (icon) {
+            icon.textContent =
+                "↑";
+        }
+
+    }
+
+}
+
+
+/* =========================================================
+   REFRESH CHATS
+========================================================= */
+
+async function refreshChatsAfterMessage() {
+
+    try {
+
+        const response =
+            await apiRequest(
+                "/api/chats"
+            );
+
+
+        const data =
+            await response.json();
+
+
+        conversations =
+            Array.isArray(data)
+                ? data
+                : (data.chats || []);
+
+
+        const active =
+            conversations.find(
+                chat =>
+                    Number(chat.id) ===
+                    Number(activeConversationId)
+            );
+
+
+        if (active) {
+
+            chatTitle.textContent =
+                active.title ||
+                "New Chat";
+
+        }
+
+
+        renderConversations(
+            searchInput.value.trim()
+        );
+
+
+    } catch (error) {
+
+        console.warn(error);
+
+    }
+
+}
+
+
+/* =========================================================
+   RENAME
+========================================================= */
+
+function openRenameModal(
+    chat
+) {
+
+    if (!chat) {
+        return;
+    }
+
+
+    renameChatInput.value =
+        chat.title || "";
+
+
+    renameModal.dataset.chatId =
+        chat.id;
+
+
+    renameModal.classList.add(
+        "open"
+    );
+
+
+    renameModal.setAttribute(
+        "aria-hidden",
+        "false"
+    );
+
+
+    setTimeout(
+        () => {
+
+            renameChatInput.focus();
+
+            renameChatInput.select();
+
+        },
+        50
+    );
+
+}
+
+
+function closeRenameModal() {
+
+    renameModal.classList.remove(
+        "open"
+    );
+
+
+    renameModal.setAttribute(
+        "aria-hidden",
+        "true"
+    );
+
+
+    delete renameModal.dataset.chatId;
+
+}
+
+
+async function saveRename() {
+
+    const chatId =
+        renameModal.dataset.chatId;
+
+
+    if (!chatId) {
+        closeRenameModal();
+        return;
+    }
+
+
+    const title =
+        renameChatInput.value.trim();
+
+
+    if (!title) {
+        showToast(
+            "Please enter a chat name.",
+            "error"
+        );
+
+        return;
+    }
+
+
+    try {
+
+        const response =
+            await apiRequest(
+                `/api/chats/${chatId}`,
+                {
+                    method: "PATCH",
+
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body:
+                        JSON.stringify({
+                            title
+                        })
+
+                }
+            );
+
+
+        const data =
+            await response.json();
+
+
+        const updated =
+            data.chat || data;
+
+
+        const chat =
+            conversations.find(
+                item =>
+                    Number(item.id) ===
+                    Number(chatId)
+            );
+
+
+        if (chat) {
+
+            chat.title =
+                updated.title ||
+                title;
+
+        }
+
+
+        if (
+            Number(activeConversationId) ===
+            Number(chatId)
+        ) {
+
+            chatTitle.textContent =
+                updated.title ||
+                title;
+
+        }
+
+
+        renderConversations(
+            searchInput.value.trim()
+        );
+
+
+        closeRenameModal();
+
+
+    } catch (error) {
+
+        showToast(
+            error.message ||
+            "Unable to rename chat.",
+            "error"
+        );
+
+    }
+
+}
+
+
+/* =========================================================
+   PIN
+========================================================= */
+
+async function togglePin(
+    chat
+) {
+
+    try {
+
+        const pinned =
+            Number(chat.pinned) === 1
+                ? 0
+                : 1;
+
+
+        const response =
+            await apiRequest(
+                `/api/chats/${chat.id}/pin`,
+                {
+                    method: "PATCH",
+
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body:
+                        JSON.stringify({
+                            pinned
+                        })
+
+                }
+            );
+
+
+        const data =
+            await response.json();
+
+
+        const updated =
+            data.chat || data;
+
+
+        chat.pinned =
+            updated.pinned ??
+            pinned;
+
+
+        conversations.sort(
+            (a, b) => {
+
+                if (
+                    Number(a.pinned) !==
+                    Number(b.pinned)
+                ) {
+
+                    return (
+                        Number(b.pinned) -
+                        Number(a.pinned)
+                    );
+
+                }
+
+
+                return (
+                    new Date(
+                        b.updated_at || 0
+                    ) -
+                    new Date(
+                        a.updated_at || 0
+                    )
+                );
+
+            }
+        );
+
+
+        renderConversations(
+            searchInput.value.trim()
+        );
+
+
+    } catch (error) {
+
+        showToast(
+            error.message ||
+            "Unable to pin chat.",
+            "error"
+        );
+
+    }
+
+}
+
+
+/* =========================================================
+   DELETE
+========================================================= */
+
+async function deleteChat(
+    chat
+) {
+
+    if (!chat) {
+        return;
+    }
+
+
+    if (
+        !window.confirm(
+            `Delete "${chat.title || "this chat"}"?`
+        )
+    ) {
+        return;
+    }
+
+
+    try {
+
+        await apiRequest(
+            `/api/chats/${chat.id}`,
+            {
+                method: "DELETE"
+            }
+        );
+
+
+        conversations =
+            conversations.filter(
+                item =>
+                    Number(item.id) !==
+                    Number(chat.id)
+            );
+
+
+        if (
+            Number(activeConversationId) ===
+            Number(chat.id)
+        ) {
+
+            activeConversationId = null;
+
+            chatTitle.textContent =
+                "Nexus AI";
+
+            showWelcome();
+
+            resetWorkspaceActivity();
+
+        }
+
+
+        renderConversations(
+            searchInput.value.trim()
+        );
+
+
+    } catch (error) {
+
+        showToast(
+            error.message ||
+            "Unable to delete chat.",
+            "error"
+        );
+
+    }
+
+}
+
+
+/* =========================================================
+   FORMAT MESSAGE
+========================================================= */
+
+function formatMessage(
+    text
+) {
+
+    if (!text) {
+        return "";
+    }
+
+
+    let safe =
+        escapeHtml(text);
+
+
+    const codeBlocks = [];
+
+
+    safe =
+        safe.replace(
+            /```([a-zA-Z0-9_+-]*)\n?([\s\S]*?)```/g,
+            (
+                match,
+                language,
+                code
+            ) => {
+
+                const index =
+                    codeBlocks.length;
+
+
+                codeBlocks.push({
+                    language:
+                        language ||
+                        "code",
+
+                    code:
+                        code.trim()
+                });
+
+
+                return (
+                    `@@NEXUS_CODE_${index}@@`
+                );
+
+            }
+        );
+
+
+    safe =
+        safe.replace(
+            /^### (.+)$/gm,
+            "<h3>$1</h3>"
+        );
+
+
+    safe =
+        safe.replace(
+            /^## (.+)$/gm,
+            "<h2>$1</h2>"
+        );
+
+
+    safe =
+        safe.replace(
+            /^# (.+)$/gm,
+            "<h1>$1</h1>"
+        );
+
+
+    safe =
+        safe.replace(
+            /\*\*(.+?)\*\*/g,
+            "<strong>$1</strong>"
+        );
+
+
+    safe =
+        safe.replace(
+            /(^|[^\*])\*([^*\n]+)\*(?!\*)/g,
+            "$1<em>$2</em>"
+        );
+
+
+    safe =
+        safe.replace(
+            /`([^`\n]+)`/g,
+            "<code>$1</code>"
+        );
+
+
+    safe =
+        safe.replace(
+            /^(?:[-*]) (.+)$/gm,
+            "<li>$1</li>"
+        );
+
+
+    safe =
+        safe.replace(
+            /((?:<li>.*<\/li>\s*)+)/g,
+            "<ul>$1</ul>"
+        );
+
+
+    safe =
+        safe.replace(
+            /^\d+\. (.+)$/gm,
+            "<li>$1</li>"
+        );
+
+
+    safe =
+        safe.replace(
+            /\n/g,
+            "<br>"
+        );
+
+
+    codeBlocks.forEach(
+        (
+            block,
+            index
+        ) => {
+
+            const codeHtml = `
+                <div class="code-block">
+
+                    <div class="code-header">
+
+                        <span>
+                            ${escapeHtml(
+                                block.language
+                            )}
+                        </span>
+
+                        <button
+                            type="button"
+                            class="copy-code-button"
+                            data-code="${escapeAttribute(
+                                block.code
+                            )}"
+                        >
+                            Copy
+                        </button>
+
+                    </div>
+
+                    <pre><code>${escapeHtml(
+                        block.code
+                    )}</code></pre>
+
+                </div>
+            `;
+
+
+            safe =
+                safe.replace(
+                    `@@NEXUS_CODE_${index}@@`,
+                    codeHtml
+                );
+
+        }
+    );
+
+
+    return safe;
+
+}
+
+
+/* =========================================================
+   COPY
+========================================================= */
+
+function attachCopyHandlers(
+    container
+) {
+
+    container
+        .querySelectorAll(
+            ".copy-code-button"
+        )
+        .forEach(
+            button => {
+
+                if (
+                    button.dataset.bound ===
+                    "true"
+                ) {
+                    return;
+                }
+
+
+                button.dataset.bound =
+                    "true";
+
+
+                button.addEventListener(
+                    "click",
+                    async () => {
+
+                        try {
+
+                            await navigator.clipboard.writeText(
+                                button.dataset.code ||
+                                ""
+                            );
+
+
+                            const original =
+                                button.textContent;
+
+
+                            button.textContent =
+                                "Copied";
+
+
+                            setTimeout(
+                                () => {
+
+                                    button.textContent =
+                                        original;
+
+                                },
+                                1200
+                            );
+
+
+                        } catch (_) {
+
+                            showToast(
+                                "Unable to copy code.",
+                                "error"
+                            );
+
+                        }
+
+                    }
+                );
+
+            }
+        );
+
+}
+
+
+/* =========================================================
+   ESCAPE
+========================================================= */
+
+function escapeHtml(
+    value
+) {
+
+    return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+
+}
+
+
+function escapeAttribute(
+    value
+) {
+
+    return escapeHtml(value)
+        .replace(
+            /`/g,
+            "&#096;"
+        );
+
+}
+
+
+/* =========================================================
+   TEXTAREA
+========================================================= */
+
+function autoResizeTextarea() {
+
+    messageInput.style.height =
+        "auto";
+
+
+    const height =
+        Math.min(
+            messageInput.scrollHeight,
+            180
+        );
+
+
+    messageInput.style.height =
+        `${height}px`;
+
+}
+
+
+/* =========================================================
+   SCROLL
+========================================================= */
+
+function scrollMessagesToBottom(
+    smooth = true
+) {
+
+    requestAnimationFrame(
+        () => {
+
+            messages.scrollTo({
+                top:
+                    messages.scrollHeight,
+
+                behavior:
+                    smooth
+                        ? "smooth"
+                        : "auto"
+            });
+
+        }
+    );
+
+}
+
+
+/* =========================================================
+   ERROR RESPONSE
+========================================================= */
+
+async function getResponseError(
+    response
+) {
+
+    let message =
+        `Request failed (${response.status})`;
+
+
+    try {
+
+        const data =
+            await response.json();
+
+
+        if (data.error) {
+            message =
+                data.error;
+        }
+
+    } catch (_) {}
+
+
+    return message;
+
+}
+
+
+/* =========================================================
+   TOAST
+========================================================= */
+
+function showToast(
+    message,
+    type = "info"
+) {
+
+    const existing =
+        document.querySelector(
+            ".nexus-toast"
+        );
+
+
+    if (existing) {
+        existing.remove();
+    }
+
+
+    const toast =
+        document.createElement(
+            "div"
+        );
+
+
+    toast.className =
+        `nexus-toast ${type}`;
+
+
+    toast.textContent =
+        message;
+
+
+    document.body.appendChild(
+        toast
+    );
+
+
+    setTimeout(
+        () => {
+
+            toast.remove();
+
+        },
+        2800
+    );
+
+}
+
+async function branchConversation(messageId) {
+    if (!activeConversationId || isSending) return;
+    try {
+        const response = await apiRequest(`/api/chats/${activeConversationId}/branch`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ messageId })
+        });
+        const data = await response.json();
+        conversations.unshift(data.chat);
+        activeConversationId = data.chat.id;
+        chatTitle.textContent = data.chat.title;
+        renderConversations();
+        await openConversation(data.chat.id);
+        showCapabilityNotice("Created a conversation branch.");
+    } catch (error) {
+        showCapabilityNotice(error.message);
+    }
+}

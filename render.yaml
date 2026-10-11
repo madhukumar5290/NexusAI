@@ -1,0 +1,73 @@
+services:
+  - type: web
+    name: nexus-ai
+    runtime: node
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NEXUS_HOST
+        value: 0.0.0.0
+      - key: NEXUS_DATA_DIR
+        value: /tmp/nexus-data/data
+      - key: NEXUS_DB_FILE
+        value: /tmp/nexus-data/nexus.db
+      - key: NEXUS_WORKSPACE
+        value: /tmp/nexus-data/workspace
+      - key: NEXUS_WORKSPACES_DIR
+        value: /tmp/nexus-data/workspaces
+      - key: NEXUS_REQUIRE_AUTH
+        value: "true"
+      - key: NEXUS_STRICT_LOOPBACK_AUTH
+        value: "true"
+      - key: NEXUS_REQUIRE_APPROVALS
+        value: "true"
+      - key: NEXUS_SECURITY_PEPPER
+        generateValue: true
+      - key: NEXUS_BOOTSTRAP_ADMIN_USERNAME
+        value: nexus-admin
+      - key: NEXUS_BOOTSTRAP_ADMIN_PASSWORD
+        generateValue: true
+      - key: NEXUS_ALLOW_SIGNUP
+        value: "false"
+      - key: NEXUS_REQUIRE_EMAIL_VERIFICATION
+        value: "true"
+      - key: NEXUS_PUBLIC_URL
+        value: https://nexus-ai-f1k8.onrender.com
+      - key: RESEND_API_KEY
+        sync: false
+      - key: NEXUS_EMAIL_FROM
+        sync: false
+      - key: GOOGLE_OAUTH_CLIENT_ID
+        sync: false
+      - key: GOOGLE_OAUTH_CLIENT_SECRET
+        sync: false
+      - key: NEXUS_GOOGLE_REDIRECT_URI
+        value: https://nexus-ai-f1k8.onrender.com/api/auth/google/callback
+      - key: NEXUS_GOOGLE_ADMIN_EMAIL
+        sync: false
+      - key: NEXUS_GOOGLE_ALLOWED_EMAILS
+        sync: false
+      - key: NEXUS_PROVIDER
+        value: openai
+      - key: NEXUS_CHAT_PROVIDER
+        value: openai
+      - key: NEXUS_CHAT_MODEL
+        value: gpt-4o-mini
+      - key: NEXUS_WRITING_PROVIDER
+        value: openai
+      - key: NEXUS_WRITING_MODEL
+        value: gpt-4o-mini
+      - key: NEXUS_CODE_PROVIDER
+        value: openai
+      - key: NEXUS_CODE_MODEL
+        value: gpt-4o-mini
+      - key: NEXUS_PLANNER_PROVIDER
+        value: openai
+      - key: NEXUS_PLANNER_MODEL
+        value: gpt-4o-mini
+      - key: NEXUS_IMAGE_MODEL
+        value: gpt-image-2

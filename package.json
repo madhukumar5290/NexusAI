@@ -1,0 +1,78 @@
+{
+  "name": "jarwis",
+  "version": "1.0.0",
+  "description": "Jarwis local-first personal AI assistant and workspace",
+  "author": "Jarwis",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test \"tests/*.test.js\"",
+    "test:smoke": "node scripts/check.js",
+    "test:browsers": "node scripts/cross-browser.mjs",
+    "test:ui": "node scripts/ui-smoke.mjs",
+    "test:stream": "node scripts/stream-render.mjs",
+    "test:api": "node scripts/api-surface.mjs",
+    "check:agents": "node scripts/check-agents.js",
+    "verify": "node scripts/verify.mjs",
+    "verify:all": "node scripts/verify.mjs --browsers",
+    "desktop": "electron .",
+    "desktop:build": "electron-builder --win nsis --x64"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [],
+  "type": "commonjs",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "better-sqlite3": "^13.0.3",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.2.1",
+    "mammoth": "^1.12.3",
+    "pdf-parse": "^2.4.5",
+    "pptxgenjs": "^4.0.1"
+  },
+  "overrides": {
+    "image-size": "2.0.4"
+  },
+  "devDependencies": {
+    "electron": "^44.4.5",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.jarwis.desktop",
+    "productName": "Jarwis",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      ".env.example",
+      "electron/**/*",
+      "src/**/*",
+      "lib/**/*",
+      "public/**/*",
+      "!public/**/*.orig",
+      "package.json"
+    ],
+    "asar": true,
+    "npmRebuild": false,
+    "asarUnpack": ["**/*.node"],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "artifactName": "Jarwis-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Jarwis"
+    }
+  }
+}
